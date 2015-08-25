@@ -146,6 +146,32 @@ def hexstring(value):
     return value
 
 
+def rewrite_snes_title(text, filename, version):
+    f = open(filename, 'r+b')
+    while len(text) < 20:
+        text += ' '
+    if len(text) > 20:
+        text = text[:19] + "?"
+    f.seek(0xFFC0)
+    f.write(text)
+    f.seek(0xFFDB)
+    f.write(chr(int(version)))
+    f.close()
+
+
+def rewrite_snes_checksum(filename):
+    MEGABIT = 0x20000
+    f = open(filename, 'r+b')
+    subsums = [sum(map(ord, f.read(MEGABIT))) for _ in xrange(24)]
+    subsums += subsums[-8:]
+    checksum = sum(subsums) & 0xFFFF
+    f.seek(0xFFDE)
+    write_multi(f, checksum, length=2)
+    f.seek(0xFFDC)
+    write_multi(f, checksum ^ 0xFFFF, length=2)
+    f.close()
+
+
 class classproperty(property):
     def __get__(self, inst, cls):
         return self.fget(cls)
