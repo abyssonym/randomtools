@@ -13,6 +13,7 @@ except ImportError:
 TABLE_SPECS = {}
 GLOBAL_FILENAME = None
 GRAND_OBJECT_DICT = {}
+NUM_GROUPS_DICT = {}
 
 
 def set_global_table_filename(filename):
@@ -21,13 +22,15 @@ def set_global_table_filename(filename):
 
 
 class TableSpecs:
-    def __init__(self, specfile, pointer=None, count=None, grouped=False):
+    def __init__(self, specfile, pointer=None, count=None,
+                 grouped=False, pointed=False):
         self.attributes = []
         self.bitnames = {}
         self.total_size = 0
         self.pointer = pointer
         self.count = count
         self.grouped = grouped
+        self.pointed = pointed
         for line in open(specfile):
             line = line.strip()
             if not line or line[0] == "#":
@@ -55,11 +58,12 @@ class TableObject(object):
             for obj in self.ranked:
                 yield obj
 
-    def __init__(self, filename=None, pointer=None):
+    def __init__(self, filename=None, pointer=None, groupindex=0):
         assert hasattr(self, "specs")
         assert self.total_size
         self.filename = filename
         self.pointer = pointer
+        self.groupindex = groupindex
         if filename:
             self.read_data(filename, pointer)
 
@@ -82,6 +86,18 @@ class TableObject(object):
     @classproperty
     def specsgrouped(cls):
         return cls.specs.grouped
+
+    @classproperty
+    def specspointed(cls):
+        return cls.specs.pointed
+
+    @classproperty
+    def specspointedpointer(cls):
+        return cls.specs.pointedpointer
+
+    @classproperty
+    def specspointedsize(cls):
+        return cls.specs.pointedsize
 
     @classproperty
     def bitnames(cls):
@@ -193,7 +209,11 @@ class TableObject(object):
                         or hasattr(class_attr, "__call__")):
                     continue
 
-            value = getattr(self, attr)
+            try:
+                value = getattr(self, attr)
+            except AttributeError:
+                continue
+
             if isinstance(value, dict):
                 continue
 
@@ -263,18 +283,46 @@ class TableObject(object):
         if pointer is None or filename is None:
             return
         f = open(filename, 'r+b')
-        f.seek(pointer)
         for name, size, other in self.specsattrs:
             value = getattr(self, name)
             if other in [None, "int"]:
+                f.seek(pointer)
                 write_multi(f, value, length=size)
+                pointer += size
             elif other == "str":
                 assert len(value) == size
+                f.seek(pointer)
                 f.write(value)
+                pointer += size
             elif other == "list":
                 for v in value:
+                    f.seek(pointer)
                     f.write(chr(v))
+                    pointer += 1
         f.close()
+        return pointer
+
+    @classmethod
+    def write_all(cls, filename):
+        if not cls.specsgrouped and not cls.specspointed:
+            for o in cls.every:
+                o.write_data(filename)
+        elif cls.specsgrouped:
+            pointer = cls.specspointer
+            f = open(filename, "r+b")
+            numgroups = NUM_GROUPS_DICT[cls]
+            for i in range(numgroups):
+                objs = [o for o in cls.every if o.groupindex == i]
+                f.seek(pointer)
+                f.write(chr(len(objs)))
+                pointer += 1
+                for o in objs:
+                    pointer = o.write_data(filename, pointer)
+        elif cls.specspointed:
+            pointer = cls.specspointer
+            pointedpointer = cls.specspointedpointer
+            size = cls.specspointedsize
+            raise NotImplementedError
 
 
 already_gotten = {}
@@ -284,33 +332,39 @@ def get_table_objects(objtype, filename=None):
     pointer = objtype.specspointer
     number = objtype.specscount
     grouped = objtype.specsgrouped
+    pointed = objtype.specspointed
     identifier = (objtype, pointer, number)
     if identifier in already_gotten:
         return already_gotten[identifier]
 
     objects = []
 
-    def add_objects(n):
+    def add_objects(n, groupindex=0):
         p = pointer
         accumulated_size = 0
         for i in xrange(n):
-            obj = objtype(filename, p)
+            obj = objtype(filename, p, groupindex=groupindex)
             obj.index = len(objects)
             objects.append(obj)
             p += obj.total_size
             accumulated_size += obj.total_size
         return accumulated_size
 
-    if not grouped:
+    if not grouped and not pointed:
         add_objects(number)
-    else:
+    elif grouped:
+        counter = 0
         while len(objects) < number:
             f = open(filename, 'r+b')
             f.seek(pointer)
             value = ord(f.read(1))
             f.close()
             pointer += 1
-            pointer += add_objects(value)
+            pointer += add_objects(value, groupindex=counter)
+            counter += 1
+        NUM_GROUPS_DICT[objtype] = counter
+    elif pointed:
+        raise NotImplementedError
     already_gotten[identifier] = objects
 
     for o in objects:
@@ -323,21 +377,33 @@ def set_table_specs(filename="tables_list.txt"):
     tablesfile = path.join(tblpath, filename)
     for line in open(tablesfile):
         line = line.strip()
-        if line and line[0] == "#":
+        if not line or line[0] == "#":
             continue
 
         while "  " in line:
             line = line.replace("  ", " ")
         line = line.split()
-        if len(line) == 5:
-            objname, tablefilename, pointer, count, grouped = tuple(line)
-            grouped = True if grouped.lower() == "true" else False
+        if len(line) >= 5:
+            (objname, tablefilename, pointer, count,
+                organization) = tuple(line[:5])
+            args = line[5:]
+            if organization.lower() not in ["grouped", "pointed"]:
+                raise NotImplementedError
+            grouped = True if organization.lower() == "grouped" else False
+            pointed = True if organization.lower() == "pointed" else False
+            if pointed:
+                pointedpointer = int(args[0], 0x10)
+                pointedsize = int(args[1]) if len(args) > 1 else 2
         else:
             objname, tablefilename, pointer, count = tuple(line)
             grouped = False
+            pointed = False
         pointer = int(pointer, 0x10)
         count = int(count)
         TABLE_SPECS[objname] = TableSpecs(path.join(tblpath, tablefilename),
-                                          pointer, count, grouped)
+                                          pointer, count, grouped, pointed)
+        if pointed:
+            TABLE_SPECS[objname].pointedpointer = pointedpointer
+            TABLE_SPECS[objname].pointedsize = pointedsize
 
 set_table_specs()
