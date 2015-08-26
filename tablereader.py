@@ -146,6 +146,23 @@ class TableObject(object):
         else:
             raise Exception("Bad index.")
 
+    @classproperty
+    def groups(cls):
+        returndict = {}
+        for obj in cls.every:
+            if obj.groupindex not in returndict:
+                returndict[obj.groupindex] = []
+            returndict[obj.groupindex].append(obj)
+        return returndict
+
+    @classmethod
+    def getgroup(cls, index):
+        return [o for o in cls.every if o.groupindex == index]
+
+    @property
+    def group(self):
+        return self.getgroup(self.groupindex)
+
     @classmethod
     def has(cls, index):
         try:
@@ -318,10 +335,22 @@ class TableObject(object):
                 pointer += 1
                 for o in objs:
                     pointer = o.write_data(filename, pointer)
+            f.close()
         elif cls.specspointed:
             pointer = cls.specspointer
             pointedpointer = cls.specspointedpointer
             size = cls.specspointedsize
+            f = open(filename, "r+b")
+            numgroups = NUM_GROUPS_DICT[cls]
+            mask = (2 ** (8*size)) - 1
+            for i in range(numgroups):
+                masked = pointedpointer & mask
+                objs = [o for o in cls.every if o.groupindex == i]
+                for o in objs:
+                    pointedpointer = o.write_data(filename, pointedpointer)
+                f.seek(pointer + (i*size))
+                write_multi(f, masked, length=size)
+            f.close()
             raise NotImplementedError
 
 
@@ -339,8 +368,9 @@ def get_table_objects(objtype, filename=None):
 
     objects = []
 
-    def add_objects(n, groupindex=0):
-        p = pointer
+    def add_objects(n, groupindex=0, p=None):
+        if p is None:
+            p = pointer
         accumulated_size = 0
         for i in xrange(n):
             obj = objtype(filename, p, groupindex=groupindex)
@@ -364,7 +394,19 @@ def get_table_objects(objtype, filename=None):
             counter += 1
         NUM_GROUPS_DICT[objtype] = counter
     elif pointed:
-        raise NotImplementedError
+        size = objtype.specspointedsize
+        counter = 0
+        f = open(filename, 'r+b')
+        while counter < number:
+            f.seek(pointer)
+            subpointer = read_multi(f, size) + objtype.specspointedpointer
+            f.seek(pointer + size)
+            subpointer2 = read_multi(f, size) + objtype.specspointedpointer
+            groupcount = (subpointer2 - subpointer) / objtype.total_size
+            add_objects(groupcount, groupindex=counter, p=subpointer)
+            pointer += size
+            counter += 1
+        NUM_GROUPS_DICT[objtype] = counter
     already_gotten[identifier] = objects
 
     for o in objects:
