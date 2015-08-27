@@ -338,10 +338,10 @@ class TableObject(object):
             f.close()
         elif cls.specspointed:
             pointer = cls.specspointer
-            pointedpointer = cls.specspointedpointer
             size = cls.specspointedsize
             f = open(filename, "r+b")
             numgroups = NUM_GROUPS_DICT[cls]
+            pointedpointer = pointer + (numgroups * size)
             mask = (2 ** (8*size)) - 1
             for i in range(numgroups):
                 masked = pointedpointer & mask
@@ -351,7 +351,6 @@ class TableObject(object):
                 f.seek(pointer + (i*size))
                 write_multi(f, masked, length=size)
             f.close()
-            raise NotImplementedError
 
 
 already_gotten = {}
