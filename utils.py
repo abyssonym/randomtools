@@ -159,11 +159,12 @@ def rewrite_snes_title(text, filename, version):
     f.close()
 
 
-def rewrite_snes_checksum(filename):
+def rewrite_snes_checksum(filename, megabits=24):
     MEGABIT = 0x20000
     f = open(filename, 'r+b')
-    subsums = [sum(map(ord, f.read(MEGABIT))) for _ in xrange(24)]
-    subsums += subsums[-8:]
+    subsums = [sum(map(ord, f.read(MEGABIT))) for _ in xrange(megabits)]
+    if megabits % 16 != 0:
+        subsums += subsums[-8:]
     checksum = sum(subsums) & 0xFFFF
     f.seek(0xFFDE)
     write_multi(f, checksum, length=2)
