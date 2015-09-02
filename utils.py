@@ -67,7 +67,7 @@ BOOST_AMOUNT = 2.0
 
 
 def mutate_normal(value, minimum=0, maximum=0xFF,
-                  reverse=False, smart=True, chain=True):
+                  reverse=False, smart=True, chain=True, return_float=False):
     value = max(minimum, min(value, maximum))
     rev = reverse
     if smart:
@@ -107,7 +107,8 @@ def mutate_normal(value, minimum=0, maximum=0xFF,
                              reverse=reverse, smart=smart, chain=True)
     else:
         value = max(minimum, min(value, maximum))
-        value = int(round(value))
+        if not return_float:
+            value = int(round(value))
         return value
 
 
@@ -143,6 +144,8 @@ def hexstring(value):
         value = "".join(["{0:0>2}".format("%x" % ord(c)) for c in value])
     elif type(value) is int:
         value = "{0:0>2}".format("%x" % value)
+    elif type(value) is list:
+        value = " ".join([hexstring(v) for v in value])
     return value
 
 
