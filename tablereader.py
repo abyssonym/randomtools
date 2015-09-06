@@ -46,6 +46,8 @@ class TableSpecs:
                 size = 1
                 bitnames = bitnames.split(" ")
                 self.bitnames[name] = bitnames
+            elif size == '?':
+                size = 0
 
             try:
                 size = int(size)
@@ -62,12 +64,13 @@ class TableObject(object):
             for obj in self.ranked:
                 yield obj
 
-    def __init__(self, filename=None, pointer=None, groupindex=0):
+    def __init__(self, filename=None, pointer=None, groupindex=0, size=None):
         assert hasattr(self, "specs")
-        assert self.total_size
+        assert isinstance(self.total_size, int)
         self.filename = filename
         self.pointer = pointer
         self.groupindex = groupindex
+        self.variable_size = size
         if filename:
             self.read_data(filename, pointer)
 
@@ -269,6 +272,16 @@ class TableObject(object):
     def __repr__(self):
         return self.description
 
+    def get_variable_specsattrs(self):
+        specsattrs = [(name, self.variable_size, other)
+                      for (name, size, other)
+                      in self.specsattrs if size == 0]
+        if not specsattrs:
+            raise ValueError("No valid specs attributes.")
+        elif len(specsattrs) >= 2:
+            raise ValueError("Too many specs attributes.")
+        return specsattrs
+
     def read_data(self, filename=None, pointer=None):
         if pointer is None:
             pointer = self.pointer
@@ -276,9 +289,15 @@ class TableObject(object):
             filename = self.filename
         if pointer is None or filename is None:
             return
+
+        if self.variable_size is not None:
+            specsattrs = self.get_variable_specsattrs()
+        else:
+            specsattrs = self.specsattrs
+
         f = open(filename, 'r+b')
         f.seek(pointer)
-        for name, size, other in self.specsattrs:
+        for name, size, other in specsattrs:
             if other in [None, "int"]:
                 value = read_multi(f, length=size)
             elif other == "str":
@@ -309,8 +328,16 @@ class TableObject(object):
             filename = self.filename
         if pointer is None or filename is None:
             return
+
+        if self.variable_size is not None:
+            # doesn't seem to work properly
+            raise NotImplementedError
+            specsattrs = self.get_variable_specsattrs()
+        else:
+            specsattrs = self.specsattrs
+
         f = open(filename, 'r+b')
-        for name, size, other in self.specsattrs:
+        for name, size, other in specsattrs:
             value = getattr(self, name)
             if other in [None, "int"]:
                 f.seek(pointer)
@@ -395,6 +422,13 @@ def get_table_objects(objtype, filename=None):
             accumulated_size += obj.total_size
         return accumulated_size
 
+    def add_variable_object(p1, p2):
+        size = p2 - p1
+        obj = objtype(filename, p1, groupindex=0, size=size)
+        obj.index = len(objects)
+        objects.append(obj)
+        return size
+
     if not grouped and not pointed:
         add_objects(number)
     elif grouped:
@@ -408,7 +442,7 @@ def get_table_objects(objtype, filename=None):
             pointer += add_objects(value, groupindex=counter)
             counter += 1
         NUM_GROUPS_DICT[objtype] = counter
-    elif pointed:
+    elif pointed and objtype.total_size > 0:
         size = objtype.specspointedsize
         counter = 0
         f = open(filename, 'r+b')
@@ -422,6 +456,18 @@ def get_table_objects(objtype, filename=None):
             pointer += size
             counter += 1
         NUM_GROUPS_DICT[objtype] = counter
+    elif pointed and objtype.total_size == 0:
+        size = objtype.specspointedsize
+        counter = 0
+        f = open(filename, 'r+b')
+        while counter < number:
+            f.seek(pointer + (size*counter))
+            subpointer = read_multi(f, size) + objtype.specspointedpointer
+            f.seek(pointer + (size*counter) + size)
+            subpointer2 = read_multi(f, size) + objtype.specspointedpointer
+            add_variable_object(subpointer, subpointer2)
+            counter += 1
+
     already_gotten[identifier] = objects
 
     for o in objects:
@@ -444,10 +490,12 @@ def set_table_specs(filename="tables_list.txt"):
             (objname, tablefilename, pointer, count,
                 organization) = tuple(line[:5])
             args = line[5:]
-            if organization.lower() not in ["grouped", "pointed"]:
+            if organization.lower() not in ["grouped", "pointed", "point1"]:
                 raise NotImplementedError
             grouped = True if organization.lower() == "grouped" else False
             pointed = True if organization.lower() == "pointed" else False
+            point1 = True if organization.lower() == "point1" else False
+            pointed = pointed or point1
             if pointed:
                 pointedpointer = int(args[0], 0x10)
                 pointedsize = int(args[1]) if len(args) > 1 else 2
@@ -455,11 +503,12 @@ def set_table_specs(filename="tables_list.txt"):
             objname, tablefilename, pointer, count = tuple(line)
             grouped = False
             pointed = False
+            point1 = False
         pointer = int(pointer, 0x10)
         count = int(count)
         TABLE_SPECS[objname] = TableSpecs(path.join(tblpath, tablefilename),
                                           pointer, count, grouped, pointed)
-        if pointed:
+        if pointed or point1:
             TABLE_SPECS[objname].pointedpointer = pointedpointer
             TABLE_SPECS[objname].pointedsize = pointedsize
 
