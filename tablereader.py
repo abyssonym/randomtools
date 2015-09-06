@@ -47,9 +47,13 @@ class TableSpecs:
                 bitnames = bitnames.split(" ")
                 self.bitnames[name] = bitnames
 
-            size = int(size)
+            try:
+                size = int(size)
+                self.total_size += size
+            except ValueError:
+                a, b = size.split('x')
+                self.total_size += (int(a)*int(b))
             self.attributes.append((name, size, other))
-            self.total_size += size
 
 
 class TableObject(object):
@@ -280,8 +284,14 @@ class TableObject(object):
             elif other == "str":
                 value = f.read(size)
             elif other == "list":
-                value = f.read(size)
-                value = map(ord, value)
+                if not isinstance(size, int):
+                    number, numbytes = size.split('x')
+                    number, numbytes = int(number), int(numbytes)
+                else:
+                    number, numbytes = size, 1
+                value = []
+                for i in xrange(number):
+                    value.append(read_multi(f, numbytes))
             setattr(self, name, value)
         f.close()
 
@@ -312,10 +322,16 @@ class TableObject(object):
                 f.write(value)
                 pointer += size
             elif other == "list":
+                if not isinstance(size, int):
+                    number, numbytes = size.split('x')
+                    number, numbytes = int(number), int(numbytes)
+                else:
+                    number, numbytes = size, 1
+                assert len(value) == number
                 for v in value:
                     f.seek(pointer)
-                    f.write(chr(v))
-                    pointer += 1
+                    write_multi(f, v, length=numbytes)
+                    pointer += numbytes
         f.close()
         return pointer
 
