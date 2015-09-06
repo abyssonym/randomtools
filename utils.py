@@ -150,6 +150,60 @@ def hexstring(value):
     return value
 
 
+generator = {}
+
+
+def generate_name(size=None, maxsize=10, namegen_table=None):
+    if namegen_table is not None or not generator:
+        lookback = None
+        for line in open(namegen_table):
+            key, values = tuple(line.strip().split())
+            generator[key] = values
+            if not lookback:
+                lookback = len(key)
+        return
+
+    lookback = len(generator.keys()[0])
+
+    if not size:
+        halfmax = maxsize / 2
+        size = random.randint(1, halfmax) + random.randint(1, halfmax)
+        if size < 4:
+            size += random.randint(0, halfmax)
+
+    def has_vowel(text):
+        for c in text:
+            if c.lower() in "aeiouy":
+                return True
+        return False
+
+    while True:
+        starts = sorted([s for s in generator if s[0].isupper()])
+        name = random.choice(starts)
+        name = name[:size]
+        while len(name) < size:
+            key = name[-lookback:]
+            if key not in generator and size - len(name) < len(key):
+                name = random.choice(starts)
+                continue
+            if key not in generator or (random.randint(1, 15) == 15
+                                        and has_vowel(name[-2:])):
+                if len(name) <= size - lookback:
+                    if len(name) + len(key) < maxsize:
+                        name += " "
+                    name += random.choice(starts)
+                    continue
+                else:
+                    name = random.choice(starts)
+                    continue
+
+            c = random.choice(generator[key])
+            name = name + c
+
+        if len(name) >= size:
+            return name
+
+
 def get_snes_palette_transformer(use_luma=False, always=None, middle=True,
                                  basepalette=None):
     def generate_swapfunc(swapcode=None):
