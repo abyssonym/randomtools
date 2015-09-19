@@ -1,4 +1,5 @@
-from utils import read_multi, write_multi, classproperty, mutate_normal, random
+from utils import (read_multi, write_multi, classproperty,
+                   mutate_normal, mutate_bits, random)
 from os import path
 import string
 
@@ -410,6 +411,7 @@ class TableObject(object):
     def mutate_all(cls):
         for o in cls.every:
             o.mutate()
+            o.mutate_bits()
 
     @classmethod
     def randomize_all(cls):
@@ -437,6 +439,23 @@ class TableObject(object):
                 value = getattr(self, attribute)
                 value = mutate_normal(value, minimum=minimum, maximum=maximum)
                 setattr(self, attribute, value)
+
+    def mutate_bits(self):
+        if not hasattr(self, "mutate_bit_attributes"):
+            return
+
+        for attribute in sorted(self.mutate_bit_attributes):
+            try:
+                chance = self.mutate_bit_attributes[attribute]
+                if random.random() <= chance:
+                    value = self.get_bit(attribute)
+                    self.set_bit(attribute, not value)
+            except:
+                no_mutate, size, odds = self.mutate_bit_attributes[attribute]
+                value = getattr(self, attribute)
+                newvalue = self.mutate_bits(value, size, odds)
+                newvalue = newvalue ^ ((value ^ newvalue) & no_mutate)
+                setattr(self, attribute, newvalue)
 
     def randomize(self):
         if not hasattr(self, "randomize_attributes"):
