@@ -1,4 +1,4 @@
-from utils import read_multi, write_multi, classproperty, mutate_normal
+from utils import read_multi, write_multi, classproperty, mutate_normal, random
 from os import path
 import string
 
@@ -121,6 +121,10 @@ class TableObject(object):
     @property
     def rank(self):
         return self.index
+
+    @property
+    def intershuffle_valid(self):
+        return True
 
     @property
     def catalogue_index(self):
@@ -395,6 +399,103 @@ class TableObject(object):
                 write_multi(f, masked, length=size)
             f.close()
 
+    @classmethod
+    def full_randomize(cls):
+        cls.shuffle_all()
+        cls.randomize_all()
+        cls.mutate_all()
+        cls.intershuffle()
+
+    @classmethod
+    def mutate_all(cls):
+        for o in cls.every:
+            o.mutate()
+
+    @classmethod
+    def randomize_all(cls):
+        for o in cls.every:
+            o.randomize()
+
+    @classmethod
+    def shuffle_all(cls):
+        for o in cls.every:
+            o.shuffle()
+
+    def mutate(self):
+        if not hasattr(self, "mutate_attributes"):
+            return
+
+        for attribute in sorted(self.mutate_attributes):
+            if issubclass(self.mutate_attributes[attribute], TableObject):
+                tob = self.mutate_attributes[attribute]
+                index = getattr(self, attribute)
+                tob = tob.get(index)
+                tob = tob.get_similar()
+                setattr(self, attribute, tob.index)
+            else:
+                minimum, maximum = self.mutate_attributes[attribute]
+                value = getattr(self, attribute)
+                value = mutate_normal(value, minimum=minimum, maximum=maximum)
+                setattr(self, attribute, value)
+
+    def randomize(self):
+        if not hasattr(self, "randomize_attributes"):
+            return
+
+        for attribute in sorted(self.randomize_attributes):
+            if issubclass(self.randomize_attributes[attribute], TableObject):
+                tob = self.randomize_attributes[attribute]
+                candidates = [t for t in tob.every if t.rank >= 0]
+                setattr(self, attribute, random.choice(candidates).index)
+            else:
+                minimum, maximum = self.randomize_attributes[attribute]
+                setattr(self, attribute, random.randint(minimum, maximum))
+
+    def shuffle(self):
+        if not hasattr(self, "shuffle_attributes"):
+            return
+
+        for attributes in sorted(self.shuffle_attributes):
+            if len(attributes) == 1:
+                attribute = attributes[0]
+                value = sorted(getattr(self, attribute))
+                random.shuffle(value)
+                setattr(self, attribute, value)
+                continue
+            values = [getattr(self, attribute) for attribute in attributes]
+            random.shuffle(values)
+            for attribute, value in zip(attributes, values):
+                setattr(self, attribute, value)
+
+    @classmethod
+    def intershuffle(cls):
+        if not hasattr(cls, "intershuffle_attributes"):
+            return
+
+        for attributes in cls.intershuffle_attributes:
+            candidates = [o for o in cls.every
+                          if o.rank >= 0 and o.intershuffle_valid]
+            shuffled = list(candidates)
+            max_index = len(candidates-1)
+            for i, o in enumerate(candidates):
+                new_index = i
+                while random.choice([True, False]):
+                    new_index += 1
+                new_index = min(new_index, max_index)
+                a, b = shuffled[i], shuffled[new_index]
+                shuffled[i] = b
+                shuffled[new_index] = a
+
+            try:
+                list(attributes)
+            except TypeError:
+                attributes = [attributes]
+
+            for a, b in zip(candidates, shuffled):
+                for attribute in attributes:
+                    aval, bval = getattr(a, attribute), getattr(b, attribute)
+                    setattr(a, attribute, bval)
+                    setattr(b, attribute, aval)
 
 already_gotten = {}
 
