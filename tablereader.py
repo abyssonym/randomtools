@@ -229,7 +229,7 @@ class TableObject(object):
             if attr.startswith('_'):
                 continue
 
-            if attr == "specs":
+            if attr in ["specs", "catalogue"]:
                 continue
 
             if hasattr(self.__class__, attr):
@@ -255,6 +255,7 @@ class TableObject(object):
                 value = "%x" % value
 
             s.append((attr, "%s" % value))
+
         s = ", ".join(["%s: %s" % (a, b) for (a, b) in s])
         s = "%x - %s" % (self.index, s)
         return s
@@ -400,6 +401,14 @@ class TableObject(object):
                 write_multi(f, masked, length=size)
             f.close()
 
+    def cleanup(self):
+        return
+
+    @classmethod
+    def full_cleanup(cls):
+        for o in cls.every:
+            o.cleanup()
+
     @classmethod
     def full_randomize(cls):
         cls.shuffle_all()
@@ -410,32 +419,45 @@ class TableObject(object):
     @classmethod
     def mutate_all(cls):
         for o in cls.every:
+            if hasattr(o, "mutated") and o.mutated:
+                continue
             o.mutate()
             o.mutate_bits()
+            o.mutated = True
 
     @classmethod
     def randomize_all(cls):
         for o in cls.every:
+            if hasattr(o, "randomized") and o.randomized:
+                continue
             o.randomize()
+            o.randomized = True
 
     @classmethod
     def shuffle_all(cls):
         for o in cls.every:
+            if hasattr(o, "shuffled") and o.shuffled:
+                continue
             o.shuffle()
+            o.shuffled = True
 
     def mutate(self):
         if not hasattr(self, "mutate_attributes"):
             return
 
         for attribute in sorted(self.mutate_attributes):
-            if issubclass(self.mutate_attributes[attribute], TableObject):
+            if isinstance(self.mutate_attributes[attribute], type):
                 tob = self.mutate_attributes[attribute]
                 index = getattr(self, attribute)
                 tob = tob.get(index)
                 tob = tob.get_similar()
                 setattr(self, attribute, tob.index)
             else:
-                minimum, maximum = self.mutate_attributes[attribute]
+                minmax = self.mutate_attributes[attribute]
+                if type(minmax) is tuple:
+                    minimum, maximum = minmax
+                else:
+                    minimum, maximum = 0, 0xff
                 value = getattr(self, attribute)
                 value = mutate_normal(value, minimum=minimum, maximum=maximum)
                 setattr(self, attribute, value)
@@ -462,7 +484,7 @@ class TableObject(object):
             return
 
         for attribute in sorted(self.randomize_attributes):
-            if issubclass(self.randomize_attributes[attribute], TableObject):
+            if isinstance(self.randomize_attributes[attribute], type):
                 tob = self.randomize_attributes[attribute]
                 candidates = [t for t in tob.every if t.rank >= 0]
                 setattr(self, attribute, random.choice(candidates).index)
@@ -491,30 +513,38 @@ class TableObject(object):
         if not hasattr(cls, "intershuffle_attributes"):
             return
 
+        hard_shuffle = False
+        if (len(set([o.rank for o in cls.every])) == 1
+                or all([o.rank == o.index for o in cls.every])):
+            hard_shuffle = True
+
         for attributes in cls.intershuffle_attributes:
             candidates = [o for o in cls.every
                           if o.rank >= 0 and o.intershuffle_valid]
             shuffled = list(candidates)
-            max_index = len(candidates-1)
-            for i, o in enumerate(candidates):
-                new_index = i
-                while random.choice([True, False]):
-                    new_index += 1
-                new_index = min(new_index, max_index)
-                a, b = shuffled[i], shuffled[new_index]
-                shuffled[i] = b
-                shuffled[new_index] = a
+            if hard_shuffle:
+                random.shuffle(shuffled)
+            else:
+                max_index = len(candidates)-1
+                for i, o in enumerate(candidates):
+                    new_index = i
+                    while random.choice([True, False]):
+                        new_index += 1
+                    new_index = min(new_index, max_index)
+                    a, b = shuffled[i], shuffled[new_index]
+                    shuffled[i] = b
+                    shuffled[new_index] = a
 
-            try:
-                list(attributes)
-            except TypeError:
+            if isinstance(attributes, str) or isinstance(attributes, unicode):
                 attributes = [attributes]
 
-            for a, b in zip(candidates, shuffled):
-                for attribute in attributes:
+            for attribute in attributes:
+                swaps = []
+                for a, b in zip(candidates, shuffled):
                     aval, bval = getattr(a, attribute), getattr(b, attribute)
+                    swaps.append(bval)
+                for a, bval in zip(candidates, swaps):
                     setattr(a, attribute, bval)
-                    setattr(b, attribute, aval)
 
 already_gotten = {}
 
