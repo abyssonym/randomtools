@@ -380,8 +380,9 @@ class TableObject(object):
             for i in range(numgroups):
                 objs = [o for o in cls.every if o.groupindex == i]
                 f.seek(pointer)
-                f.write(chr(len(objs)))
-                pointer += 1
+                if cls.specs.groupednum is None:
+                    f.write(chr(len(objs)))
+                    pointer += 1
                 for o in objs:
                     pointer = o.write_data(filename, pointer)
             f.close()
@@ -584,11 +585,14 @@ def get_table_objects(objtype, filename=None):
     elif grouped:
         counter = 0
         while len(objects) < number:
-            f = open(filename, 'r+b')
-            f.seek(pointer)
-            value = ord(f.read(1))
-            f.close()
-            pointer += 1
+            if objtype.specs.groupednum is None:
+                f = open(filename, 'r+b')
+                f.seek(pointer)
+                value = ord(f.read(1))
+                f.close()
+                pointer += 1
+            else:
+                value = objtype.specs.groupednum
             pointer += add_objects(value, groupindex=counter)
             counter += 1
         NUM_GROUPS_DICT[objtype] = counter
@@ -636,6 +640,7 @@ def set_table_specs(filename="tables_list.txt"):
         while "  " in line:
             line = line.replace("  ", " ")
         line = line.split()
+        groupednum = None
         if len(line) >= 5:
             (objname, tablefilename, pointer, count,
                 organization) = tuple(line[:5])
@@ -649,6 +654,8 @@ def set_table_specs(filename="tables_list.txt"):
             if pointed:
                 pointedpointer = int(args[0], 0x10)
                 pointedsize = int(args[1]) if len(args) > 1 else 2
+            if grouped and len(args) >= 1:
+                groupednum = int(args[0])
         else:
             objname, tablefilename, pointer, count = tuple(line)
             grouped = False
@@ -661,5 +668,7 @@ def set_table_specs(filename="tables_list.txt"):
         if pointed or point1:
             TABLE_SPECS[objname].pointedpointer = pointedpointer
             TABLE_SPECS[objname].pointedsize = pointedsize
+        if grouped:
+            TABLE_SPECS[objname].groupednum = groupednum
 
 set_table_specs()
