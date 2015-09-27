@@ -22,6 +22,24 @@ def set_global_table_filename(filename):
     GLOBAL_FILENAME = filename
 
 
+def sort_good_order(objects):
+    objects = sorted(objects, key=lambda o: o.__name__)
+    while True:
+        changed = False
+        for o in list(objects):
+            if hasattr(o, "after_order"):
+                index = objects.index(o)
+                for o2 in o.after_order:
+                    index2 = objects.index(o2)
+                    if index2 > index:
+                        objects.remove(o)
+                        objects.insert(index2, o)
+                        changed = True
+        if not changed:
+            break
+    return objects
+
+
 class TableSpecs:
     def __init__(self, specfile, pointer=None, count=None,
                  grouped=False, pointed=False):
@@ -322,8 +340,6 @@ class TableObject(object):
 
     def copy_data(self, another):
         for name, _, _ in self.specsattrs:
-            if name in ["filename", "pointer", "index"]:
-                continue
             value = getattr(another, name)
             setattr(self, name, value)
 
@@ -407,15 +423,26 @@ class TableObject(object):
 
     @classmethod
     def full_cleanup(cls):
+        if hasattr(cls, "after_order"):
+            for cls2 in cls.after_order:
+                if not (hasattr(cls2, "cleaned") and cls2.cleaned):
+                    raise Exception("Clean order violated.")
         for o in cls.every:
             o.cleanup()
+        cls.cleaned = True
 
     @classmethod
     def full_randomize(cls):
+        if hasattr(cls, "after_order"):
+            for cls2 in cls.after_order:
+                if not (hasattr(cls2, "randomized") and cls2.randomized):
+                    raise Exception("Randomize order violated.")
+        cls.groupshuffle()
+        cls.intershuffle()
         cls.shuffle_all()
         cls.randomize_all()
         cls.mutate_all()
-        cls.intershuffle()
+        cls.randomized = True
 
     @classmethod
     def mutate_all(cls):
@@ -546,6 +573,29 @@ class TableObject(object):
                     swaps.append(bval)
                 for a, bval in zip(candidates, swaps):
                     setattr(a, attribute, bval)
+
+    @classmethod
+    def groupshuffle(cls):
+        if (not hasattr(cls, "groupshuffle_enabled")
+                or not cls.groupshuffle_enabled):
+            return
+
+        numgroups = len(cls.groups)
+        shuffled = range(numgroups)
+        random.shuffle(shuffled)
+        swapdict = {}
+        for a, b in zip(range(numgroups), shuffled):
+            a = cls.getgroup(a)
+            b = cls.getgroup(b)
+            for a1, b1 in zip(a, b):
+                swapdict[a1] = (b1.groupindex, b1.index, b1.pointer)
+
+        for o in cls.every:
+            groupindex, index, pointer = swapdict[o]
+            o.groupindex = groupindex
+            o.index = index
+            o.pointer = pointer
+
 
 already_gotten = {}
 
