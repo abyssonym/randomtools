@@ -30,19 +30,30 @@ def run_interface(objects):
 
     if sourcefile is None:
         sourcefile = raw_input("Rom filename? ")
+
+    flagobjects = [o for o in objects if hasattr(o, "flag")
+                   and hasattr(o, "flag_description")]
+    flagobjects = sorted(flagobjects, key=lambda o: o.flag)
+    for o in objects:
+        if hasattr(o, "flag") and not hasattr(o, "flag_description"):
+            for fo in flagobjects:
+                if fo.flag == o.flag:
+                    break
+            else:
+                raise Exception("%s has no flag description." % o.flag)
+
     if flags is None and num_args < 2:
         print
         print "Please input the flags for the things you want to randomize."
-        flagobjects = [o for o in objects if hasattr(o, "flag")
-                       and hasattr(o, "flag_description")]
-        flagobjects = sorted(flagobjects, key=lambda o: o.flag)
         for o in flagobjects:
             print "    %s  Randomize %s." % (o.flag,
                                              o.flag_description.lower())
         print
         flags = raw_input("Flags? (blank for all) ").strip()
+
     if seed is None and num_args < 2:
         seed = raw_input("Seed? (blank for random) ").strip()
+
     if difficulty is None and num_args < 2:
         difficulty = raw_input("Difficulty? (default: 1.0) ").strip()
         print
