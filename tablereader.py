@@ -13,15 +13,21 @@ except ImportError:
 
 MASTER_FILENAME = "master.txt"
 TABLE_SPECS = {}
-GLOBAL_FILENAME = None
+GLOBAL_OUTPUT = None
+GLOBAL_TABLE = None
 GLOBAL_LABEL = None
 GRAND_OBJECT_DICT = {}
 NUM_GROUPS_DICT = {}
 
 
+def set_global_output_filename(filename):
+    global GLOBAL_OUTPUT
+    GLOBAL_OUTPUT = filename
+
+
 def set_global_table_filename(filename):
-    global GLOBAL_FILENAME
-    GLOBAL_FILENAME = filename
+    global GLOBAL_TABLE
+    GLOBAL_TABLE = filename
 
 
 def determine_global_table(outfile):
@@ -164,7 +170,7 @@ class TableObject(object):
 
     @classproperty
     def every(cls):
-        return get_table_objects(cls, filename=GLOBAL_FILENAME)
+        return get_table_objects(cls)
 
     @property
     def rank(self):
@@ -638,6 +644,8 @@ def get_table_objects(objtype, filename=None):
     if identifier in already_gotten:
         return already_gotten[identifier]
 
+    if filename is None:
+        filename = GLOBAL_OUTPUT
     objects = []
 
     def add_objects(n, groupindex=0, p=None):
@@ -709,7 +717,9 @@ def get_table_objects(objtype, filename=None):
     return get_table_objects(objtype, filename=filename)
 
 
-def set_table_specs(filename="tables_list.txt"):
+def set_table_specs(filename=None):
+    if filename is None:
+        filename = GLOBAL_TABLE
     tablesfile = path.join(tblpath, filename)
     for line in open(tablesfile):
         line = line.strip()

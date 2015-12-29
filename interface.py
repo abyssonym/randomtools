@@ -5,7 +5,8 @@ from time import time
 from shutil import copyfile
 
 from randomtools.tablereader import (
-    determine_global_table, sort_good_order, set_table_specs)
+    determine_global_table, sort_good_order, set_table_specs,
+    set_global_output_filename)
 from randomtools.utils import (
     rewrite_snes_title, rewrite_snes_checksum)
 
@@ -68,6 +69,7 @@ def run_interface(objects, custom_difficulty=False, snes=False):
         snescopy(sourcefile, outfile)
     else:
         copyfile(sourcefile, outfile)
+    set_global_output_filename(outfile)
     determine_global_table(outfile)
     set_table_specs()
 
