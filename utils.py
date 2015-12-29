@@ -1,5 +1,13 @@
 import random
 from collections import defaultdict
+from hashlib import md5
+
+
+def md5hash(filename):
+    f = open(filename)
+    data = f.read()
+    f.close()
+    return md5(data).hexdigest()
 
 
 def int2bytes(value, length=2, reverse=True):

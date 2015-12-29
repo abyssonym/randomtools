@@ -1,10 +1,11 @@
 from sys import argv
+from os import stat
 import string
 from time import time
 from shutil import copyfile
 
 from randomtools.tablereader import (
-    set_global_table_filename, sort_good_order)
+    determine_global_table, sort_good_order, set_table_specs)
 from randomtools.utils import (
     rewrite_snes_title, rewrite_snes_checksum)
 
@@ -19,7 +20,25 @@ def rewrite_snes_meta(title, version, megabits):
     rewrite_snes_checksum(outfile, megabits=megabits)
 
 
-def run_interface(objects):
+def snescopy(sourcefile, outfile):
+    size = stat(sourcefile).st_size
+    if size % 0x400 == 0:
+        copyfile(sourcefile, outfile)
+    elif size % 0x200 == 0:
+        print "SNES header detected. Removing header from output file."
+        f = open(sourcefile, 'r+b')
+        data = f.read()
+        f.close()
+        data = data[0x200:]
+        open(outfile, 'w+').close()
+        f = open(outfile, 'r+b')
+        f.write(data)
+        f.close()
+    else:
+        raise Exception("Inappropriate file size for SNES rom file.")
+
+
+def run_interface(objects, custom_difficulty=False, snes=False):
     global outfile, flags, seed, difficulty
 
     args = list(argv)[:5]
@@ -30,6 +49,27 @@ def run_interface(objects):
 
     if sourcefile is None:
         sourcefile = raw_input("Rom filename? ")
+
+    if seed is None and num_args < 2:
+        seed = raw_input("Seed? (blank for random) ").strip()
+
+    if seed is None or seed == "":
+        seed = time()
+    seed = int(seed)
+    seed = seed % (10**10)
+
+    if "." not in sourcefile:
+        outfile = [sourcefile, "smc"]
+    else:
+        outfile = sourcefile.split(".")
+    outfile = outfile[:-1] + [str(seed), outfile[-1]]
+    outfile = ".".join(outfile)
+    if snes:
+        snescopy(sourcefile, outfile)
+    else:
+        copyfile(sourcefile, outfile)
+    determine_global_table(outfile)
+    set_table_specs()
 
     flagobjects = [o for o in objects if hasattr(o, "flag")
                    and hasattr(o, "flag_description")]
@@ -51,17 +91,12 @@ def run_interface(objects):
         print
         flags = raw_input("Flags? (blank for all) ").strip()
 
-    if seed is None and num_args < 2:
-        seed = raw_input("Seed? (blank for random) ").strip()
+    if not custom_difficulty:
+        difficulty = 1.0
 
     if difficulty is None and num_args < 2:
         difficulty = raw_input("Difficulty? (default: 1.0) ").strip()
         print
-
-    if seed is None or seed == "":
-        seed = time()
-    seed = int(seed)
-    seed = seed % (10**10)
 
     if difficulty is None or difficulty == "":
         difficulty = 1.0
@@ -76,15 +111,6 @@ def run_interface(objects):
         print ("Randomizing %s with flags '%s' using seed %s "
                "and difficulty %s." % (sourcefile, flags, seed, difficulty))
     print
-
-    if "." not in sourcefile:
-        outfile = [sourcefile, "smc"]
-    else:
-        outfile = sourcefile.split(".")
-    outfile = outfile[:-1] + [str(seed), outfile[-1]]
-    outfile = ".".join(outfile)
-    copyfile(sourcefile, outfile)
-    set_global_table_filename(outfile)
 
     objects = sort_good_order(objects)
     for o in objects:

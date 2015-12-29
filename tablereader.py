@@ -1,5 +1,5 @@
 from utils import (read_multi, write_multi, classproperty,
-                   mutate_normal, mutate_bits, random)
+                   mutate_normal, mutate_bits, random, md5hash)
 from os import path
 import string
 
@@ -11,8 +11,10 @@ except ImportError:
     tblpath = "tables"
 
 
+MASTER_FILENAME = "master.txt"
 TABLE_SPECS = {}
 GLOBAL_FILENAME = None
+GLOBAL_LABEL = None
 GRAND_OBJECT_DICT = {}
 NUM_GROUPS_DICT = {}
 
@@ -20,6 +22,33 @@ NUM_GROUPS_DICT = {}
 def set_global_table_filename(filename):
     global GLOBAL_FILENAME
     GLOBAL_FILENAME = filename
+
+
+def determine_global_table(outfile):
+    global GLOBAL_LABEL
+    tablefiles, labelfiles = {}, {}
+    for line in open(path.join(tblpath, MASTER_FILENAME)):
+        line = line.strip()
+        if not line or line[0] == "#":
+            continue
+        while "  " in line:
+            line = line.replace("  ", " ")
+        label, h2, tablefile = line.split()
+        tablefiles[h2] = (label, tablefile)
+        labelfiles[label] = tablefile
+    h = md5hash(outfile)
+    if h in tablefiles:
+        label, filename = tablefiles[h]
+    else:
+        print "Unrecognized rom file."
+        for i, label in enumerate(sorted(labelfiles)):
+            print "%s. %s" % ((i+1), label)
+        selection = int(raw_input("Choose 1-%s: " % len(labelfiles)))
+        label = sorted(labelfiles.keys())[selection-1]
+        filename = labelfiles[label]
+    print label
+    GLOBAL_LABEL = label
+    set_global_table_filename(filename)
 
 
 def sort_good_order(objects):
@@ -720,5 +749,3 @@ def set_table_specs(filename="tables_list.txt"):
             TABLE_SPECS[objname].pointedsize = pointedsize
         if grouped:
             TABLE_SPECS[objname].groupednum = groupednum
-
-set_table_specs()
