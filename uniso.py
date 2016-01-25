@@ -1,11 +1,8 @@
-from shutil import copyfile
-from os import remove
-
-
 def remove_sector_metadata(sourcefile, outfile):
     # playstation discs are CD-ROM XA mode 2 (form 1 for data)
     print "REMOVING SECTOR METADATA"
-    copyfile(sourcefile, outfile)
+    g = open(outfile, "w+")
+    g.close()
     f = open(sourcefile, 'r+b')
     g = open(outfile, 'r+b')
     g.truncate()
