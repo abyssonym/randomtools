@@ -10,10 +10,16 @@ from randomtools.tablereader import (
 from randomtools.utils import (
     rewrite_snes_title, rewrite_snes_checksum)
 
+sourcefile = None
 outfile = None
 flags = None
 seed = None
 difficulty = None
+
+
+def get_outfile():
+    global outfile
+    return outfile
 
 
 def rewrite_snes_meta(title, version, megabits):
@@ -40,7 +46,7 @@ def snescopy(sourcefile, outfile):
 
 
 def run_interface(objects, custom_difficulty=False, snes=False):
-    global outfile, flags, seed, difficulty
+    global sourcefile, outfile, flags, seed, difficulty
 
     args = list(argv)[:5]
     num_args = len(args)
@@ -59,20 +65,6 @@ def run_interface(objects, custom_difficulty=False, snes=False):
     seed = int(seed)
     seed = seed % (10**10)
 
-    if "." not in sourcefile:
-        outfile = [sourcefile, "smc"]
-    else:
-        outfile = sourcefile.split(".")
-    outfile = outfile[:-1] + [str(seed), outfile[-1]]
-    outfile = ".".join(outfile)
-    if snes:
-        snescopy(sourcefile, outfile)
-    else:
-        copyfile(sourcefile, outfile)
-    set_global_output_filename(outfile)
-    determine_global_table(outfile)
-    set_table_specs()
-
     flagobjects = [o for o in objects if hasattr(o, "flag")
                    and hasattr(o, "flag_description")]
     flagobjects = sorted(flagobjects, key=lambda o: o.flag)
@@ -83,6 +75,7 @@ def run_interface(objects, custom_difficulty=False, snes=False):
                     break
             else:
                 raise Exception("%s has no flag description." % o.flag)
+    allflags = "".join(sorted([f.flag for f in flagobjects]))
 
     if flags is None and num_args < 2:
         print
@@ -92,6 +85,30 @@ def run_interface(objects, custom_difficulty=False, snes=False):
                                              o.flag_description.lower())
         print
         flags = raw_input("Flags? (blank for all) ").strip()
+    elif flags is None:
+        flags = allflags
+    flags = "".join(sorted([f for f in flags if f in allflags]))
+
+    if "." not in sourcefile:
+        outfile = [sourcefile, "smc"]
+    else:
+        outfile = sourcefile.split(".")
+    if flags == allflags:
+        flagstr = ""
+    else:
+        flagstr = flags
+    outfile = outfile[:-1] + [flagstr, str(seed), outfile[-1]]
+    outfile = ".".join(outfile)
+    while ".." in outfile:
+        outfile = outfile.replace("..", ".")
+
+    if snes:
+        snescopy(sourcefile, outfile)
+    else:
+        copyfile(sourcefile, outfile)
+    set_global_output_filename(outfile)
+    determine_global_table(outfile)
+    set_table_specs()
 
     if not custom_difficulty:
         difficulty = 1.0
@@ -104,7 +121,7 @@ def run_interface(objects, custom_difficulty=False, snes=False):
         difficulty = 1.0
     difficulty = float(difficulty)
 
-    if flags is None or flags == "":
+    if flags == allflags:
         flags = string.lowercase
         print ("Randomizing %s with all flags using seed %s "
                "and difficulty %s." % (sourcefile, seed, difficulty))
