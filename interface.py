@@ -89,6 +89,8 @@ def run_interface(objects, custom_difficulty=False, snes=False):
     elif flags is None:
         flags = allflags
     flags = "".join(sorted([f for f in flags if f in allflags]))
+    if not flags:
+        flags = allflags
 
     if "." not in sourcefile:
         outfile = [sourcefile, "smc"]
