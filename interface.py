@@ -137,10 +137,14 @@ def run_interface(objects, custom_difficulty=False, snes=False):
         o.every
 
     for o in objects:
-        if hasattr(o, "flag_description"):
+        if hasattr(o, "flag_description") and o.flag in flags:
             print "Randomizing %s." % o.flag_description.lower()
         if not hasattr(o, "flag") or o.flag in flags:
             o.full_randomize()
+
+
+def clean_and_write(objects):
+    objects = sort_good_order(objects)
     for o in objects:
         if hasattr(o, "flag_description"):
             print "Cleaning %s." % o.flag_description.lower()
