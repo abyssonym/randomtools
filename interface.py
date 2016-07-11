@@ -8,7 +8,7 @@ from randomtools.tablereader import (
     determine_global_table, sort_good_order, set_table_specs,
     set_global_output_filename)
 from randomtools.utils import (
-    rewrite_snes_title, rewrite_snes_checksum)
+    utilrandom as random, rewrite_snes_title, rewrite_snes_checksum)
 
 sourcefile = None
 outfile = None
@@ -64,6 +64,7 @@ def run_interface(objects, custom_difficulty=False, snes=False):
         seed = time()
     seed = int(seed)
     seed = seed % (10**10)
+    random.seed(seed)
 
     flagobjects = [o for o in objects if hasattr(o, "flag")
                    and hasattr(o, "flag_description")]
