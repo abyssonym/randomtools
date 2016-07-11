@@ -140,6 +140,7 @@ def run_interface(objects, custom_difficulty=False, snes=False):
         if hasattr(o, "flag_description") and o.flag in flags:
             print "Randomizing %s." % o.flag_description.lower()
         if not hasattr(o, "flag") or o.flag in flags:
+            random.seed(seed)
             o.full_randomize()
 
 
@@ -148,6 +149,7 @@ def clean_and_write(objects):
     for o in objects:
         if hasattr(o, "flag_description"):
             print "Cleaning %s." % o.flag_description.lower()
+        random.seed(seed+1)
         o.full_cleanup()
 
     for o in objects:
