@@ -4,7 +4,7 @@ from hashlib import md5
 
 
 def md5hash(filename):
-    f = open(filename)
+    f = open(filename, 'r+b')
     data = f.read()
     f.close()
     return md5(data).hexdigest()

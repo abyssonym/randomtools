@@ -46,12 +46,17 @@ def determine_global_table(outfile):
     if h in tablefiles:
         label, filename = tablefiles[h]
     else:
-        print "Unrecognized rom file."
+        print "Unrecognized rom file: %s" % h
         for i, label in enumerate(sorted(labelfiles)):
             print "%s. %s" % ((i+1), label)
-        selection = int(raw_input("Choose 1-%s: " % len(labelfiles)))
-        label = sorted(labelfiles.keys())[selection-1]
-        filename = labelfiles[label]
+        if len(labelfiles) > 1:
+            selection = int(raw_input("Choose 1-%s: " % len(labelfiles)))
+            label = sorted(labelfiles.keys())[selection-1]
+            filename = labelfiles[label]
+        else:
+            raw_input("Using this rom information. Okay? ")
+            label = sorted(labelfiles.keys())[0]
+            filename = labelfiles[label]
     print label
     GLOBAL_LABEL = label
     set_global_table_filename(filename)
