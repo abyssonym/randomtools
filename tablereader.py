@@ -527,6 +527,8 @@ class TableObject(object):
                 else:
                     minimum, maximum = 0, 0xff
                 value = getattr(self, attribute)
+                if value < minimum or value > maximum:
+                    continue
                 value = mutate_normal(value, minimum=minimum, maximum=maximum)
                 setattr(self, attribute, value)
 
