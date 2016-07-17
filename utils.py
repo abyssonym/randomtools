@@ -471,29 +471,37 @@ def get_snes_palette_transformer(use_luma=False, always=None, middle=True,
     return palette_transformer
 
 
-def rewrite_snes_title(text, filename, version):
+def rewrite_snes_title(text, filename, version, lorom=False):
     f = open(filename, 'r+b')
     while len(text) < 20:
         text += ' '
     if len(text) > 20:
         text = text[:19] + "?"
-    f.seek(0xFFC0)
+    if lorom:
+        mask = 0x7FFF
+    else:
+        mask = 0xFFFF
+    f.seek(0xFFC0 & mask)
     f.write(text)
-    f.seek(0xFFDB)
+    f.seek(0xFFDB & mask)
     f.write(chr(int(version)))
     f.close()
 
 
-def rewrite_snes_checksum(filename, megabits=24):
+def rewrite_snes_checksum(filename, megabits=24, lorom=False):
     MEGABIT = 0x20000
     f = open(filename, 'r+b')
     subsums = [sum(map(ord, f.read(MEGABIT))) for _ in xrange(megabits)]
     if megabits % 16 != 0:
         subsums += subsums[-8:]
     checksum = sum(subsums) & 0xFFFF
-    f.seek(0xFFDE)
+    if lorom:
+        mask = 0x7FFF
+    else:
+        mask = 0xFFFF
+    f.seek(0xFFDE & mask)
     write_multi(f, checksum, length=2)
-    f.seek(0xFFDC)
+    f.seek(0xFFDC & mask)
     write_multi(f, checksum ^ 0xFFFF, length=2)
     f.close()
 

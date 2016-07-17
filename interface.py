@@ -22,9 +22,9 @@ def get_outfile():
     return outfile
 
 
-def rewrite_snes_meta(title, version, megabits):
-    rewrite_snes_title("%s %s" % (title, seed), outfile, version)
-    rewrite_snes_checksum(outfile, megabits=megabits)
+def rewrite_snes_meta(title, version, megabits, lorom=False):
+    rewrite_snes_title("%s %s" % (title, seed), outfile, version, lorom=lorom)
+    rewrite_snes_checksum(outfile, megabits=megabits, lorom=lorom)
 
 
 def snescopy(sourcefile, outfile):
