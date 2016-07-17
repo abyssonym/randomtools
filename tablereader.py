@@ -598,8 +598,11 @@ class TableObject(object):
                 max_index = len(candidates)-1
                 for i, o in enumerate(candidates):
                     new_index = i
-                    while random.choice([True, False]):
-                        new_index += 1
+                    odds = 2
+                    while random.randint(1, odds) == 1:
+                        new_index += min(1, (max_index / 10.0))
+                        odds += 1
+                    new_index = int(round(new_index))
                     new_index = min(new_index, max_index)
                     a, b = shuffled[i], shuffled[new_index]
                     shuffled[i] = b
