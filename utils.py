@@ -72,6 +72,19 @@ def mutate_bits(value, size=8, odds_multiplier=2.0):
     return value
 
 
+def shuffle_bits(value, size=8, odds_multiplier=None):
+    numbits = bin(value).count("1")
+    if numbits:
+        digits = random.sample(range(size), numbits)
+        newvalue = 0
+        for d in digits:
+            newvalue |= (1 << d)
+        value = newvalue
+    if odds_multiplier is not None:
+        value = mutate_bits(value, size, odds_multiplier)
+    return value
+
+
 BOOST_AMOUNT = 2.0
 
 
