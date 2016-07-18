@@ -22,6 +22,16 @@ def get_outfile():
     return outfile
 
 
+def get_seed():
+    global seed
+    return seed
+
+
+def get_flags():
+    global flags
+    return flags
+
+
 def rewrite_snes_meta(title, version, megabits, lorom=False):
     rewrite_snes_title("%s %s" % (title, seed), outfile, version, lorom=lorom)
     rewrite_snes_checksum(outfile, megabits=megabits, lorom=lorom)
@@ -144,6 +154,9 @@ def run_interface(objects, custom_difficulty=False, snes=False):
         if not hasattr(o, "flag") or o.flag in flags:
             random.seed(seed)
             o.full_randomize()
+
+    if set(flags) >= set(allflags):
+        flags = allflags
 
 
 def clean_and_write(objects):
