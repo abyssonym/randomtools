@@ -596,15 +596,19 @@ class TableObject(object):
                 random.shuffle(shuffled)
             else:
                 max_index = len(candidates)-1
+                done = set([])
                 for i, o in enumerate(candidates):
                     new_index = i
                     odds = 2
+                    if shuffled[i] in done:
+                        continue
                     while random.randint(1, odds) == 1:
                         new_index += min(1, (max_index / 10.0))
                         odds += 1
                     new_index = int(round(new_index))
                     new_index = min(new_index, max_index)
                     a, b = shuffled[i], shuffled[new_index]
+                    done.add(a)
                     shuffled[i] = b
                     shuffled[new_index] = a
 
