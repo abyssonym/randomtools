@@ -193,10 +193,11 @@ class TableObject(object):
     def ranked(cls):
         return sorted(cls.every, key=lambda c: (c.rank, c.index))
 
-    def get_similar(self):
+    def get_similar(self, candidates=None):
         if self.rank < 0:
             return self
-        candidates = [c for c in self.ranked if c.rank >= 0]
+        if candidates is None:
+            candidates = [c for c in self.ranked if c.rank >= 0]
         index = candidates.index(self)
         index = mutate_normal(index, maximum=len(candidates)-1)
         return candidates[index]
