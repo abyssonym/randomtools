@@ -198,6 +198,7 @@ class TableObject(object):
             return self
         if candidates is None:
             candidates = [c for c in self.ranked if c.rank >= 0]
+        candidates = sorted(candidates, key=lambda c: c.rank)
         index = candidates.index(self)
         index = mutate_normal(index, maximum=len(candidates)-1)
         return candidates[index]
