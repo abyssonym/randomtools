@@ -162,6 +162,10 @@ class TableObject(object):
         return cls.specs.pointedpointer
 
     @classproperty
+    def specspointedpoint1(cls):
+        return cls.specs.pointedpoint1
+
+    @classproperty
     def specspointedsize(cls):
         return cls.specs.pointedsize
 
@@ -709,6 +713,8 @@ def get_table_objects(objtype, filename=None):
             f.seek(pointer + size)
             subpointer2 = read_multi(f, size) + objtype.specspointedpointer
             groupcount = (subpointer2 - subpointer) / objtype.total_size
+            if objtype.specspointedpoint1:
+                groupcount = 1
             add_objects(groupcount, groupindex=counter, p=subpointer)
             pointer += size
             counter += 1
@@ -773,5 +779,6 @@ def set_table_specs(filename=None):
         if pointed or point1:
             TABLE_SPECS[objname].pointedpointer = pointedpointer
             TABLE_SPECS[objname].pointedsize = pointedsize
+            TABLE_SPECS[objname].pointedpoint1 = point1
         if grouped:
             TABLE_SPECS[objname].groupednum = groupednum
