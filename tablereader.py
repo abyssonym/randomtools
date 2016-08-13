@@ -597,20 +597,20 @@ class TableObject(object):
         for attributes in cls.intershuffle_attributes:
             candidates = [o for o in cls.every
                           if o.rank >= 0 and o.intershuffle_valid]
-            shuffled = list(candidates)
             if hard_shuffle:
+                shuffled = list(candidates)
                 random.shuffle(shuffled)
             else:
+                candidates = sorted(candidates, key=lambda c: c.rank)
+                shuffled = list(candidates)
                 max_index = len(candidates)-1
                 done = set([])
                 for i, o in enumerate(candidates):
                     new_index = i
-                    odds = 2
                     if shuffled[i] in done:
                         continue
-                    while random.randint(1, odds) == 1:
+                    while random.choice([True, False]):
                         new_index += min(1, (max_index / 10.0))
-                        odds += 1
                     new_index = int(round(new_index))
                     new_index = min(new_index, max_index)
                     a, b = shuffled[i], shuffled[new_index]
