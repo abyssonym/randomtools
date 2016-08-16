@@ -472,7 +472,8 @@ class TableObject(object):
         if hasattr(cls, "after_order"):
             for cls2 in cls.after_order:
                 if not (hasattr(cls2, "cleaned") and cls2.cleaned):
-                    raise Exception("Clean order violated.")
+                    raise Exception("Clean order violated: %s %s"
+                                    % (cls, cls2))
         for o in cls.every:
             o.cleanup()
         cls.cleaned = True
@@ -482,7 +483,8 @@ class TableObject(object):
         if hasattr(cls, "after_order"):
             for cls2 in cls.after_order:
                 if not (hasattr(cls2, "randomized") and cls2.randomized):
-                    raise Exception("Randomize order violated.")
+                    raise Exception("Randomize order violated: %s %s"
+                                    % (cls, cls2))
         cls.groupshuffle()
         cls.intershuffle()
         cls.shuffle_all()
