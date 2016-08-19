@@ -20,6 +20,11 @@ GRAND_OBJECT_DICT = {}
 NUM_GROUPS_DICT = {}
 
 
+def get_global_label():
+    global GLOBAL_LABEL
+    return GLOBAL_LABEL
+
+
 def set_global_output_filename(filename):
     global GLOBAL_OUTPUT
     GLOBAL_OUTPUT = filename
