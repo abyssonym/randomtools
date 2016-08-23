@@ -69,6 +69,7 @@ def determine_global_table(outfile):
 
 def sort_good_order(objects):
     objects = sorted(objects, key=lambda o: o.__name__)
+    objects = [o for o in objects if o.__name__ in TABLE_SPECS]
     while True:
         changed = False
         for o in list(objects):
