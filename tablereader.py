@@ -1,5 +1,6 @@
 from utils import (read_multi, write_multi, classproperty,
                    mutate_normal, mutate_bits, random, md5hash)
+from functools import total_ordering
 from os import path
 import string
 
@@ -123,6 +124,7 @@ class TableSpecs:
             self.attributes.append((name, size, other))
 
 
+@total_ordering
 class TableObject(object):
     class __metaclass__(type):
         def __iter__(self):
@@ -138,6 +140,17 @@ class TableObject(object):
         self.variable_size = size
         if filename:
             self.read_data(filename, pointer)
+
+    def __eq__(self, other):
+        if type(self) is type(other):
+            return self.index == other.index
+        return False
+
+    def __lt__(self, other):
+        if other is None:
+            return False
+        assert type(self) is type(other)
+        return (self.rank, self.index) < (other.rank, other.index)
 
     @classproperty
     def specs(cls):
