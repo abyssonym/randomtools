@@ -85,53 +85,23 @@ def shuffle_bits(value, size=8, odds_multiplier=None):
     return value
 
 
-BOOST_AMOUNT = 2.0
-
-
-def mutate_normal(value, minimum=0, maximum=0xFF,
-                  reverse=False, smart=True, chain=True, return_float=False):
-    value = max(minimum, min(value, maximum))
-    rev = reverse
-    if smart:
-        if value > (minimum + maximum) / 2:
-            rev = True
-        else:
-            rev = False
-
-    if rev:
-        value = maximum - value
+NUM_SUMMED = 3
+MIN_WIDTH = 1
+def mutate_normal(value, minimum=0, maximum=0xFF, variance=0.5,
+                  return_float=False):
+    width = max(min(value-minimum, maximum-value), MIN_WIDTH)
+    randval = 0
+    for _ in xrange(NUM_SUMMED):
+        randval += random.random()
+    randval = variance - ((2*variance*randval) / NUM_SUMMED)
+    newvalue = value + (randval * width)
+    if random.random() < variance:
+        return mutate_normal(newvalue, minimum=minimum, maximum=maximum,
+                             return_float=return_float)
+    if return_float:
+        return max(min(newvalue, maximum), minimum)
     else:
-        value = value - minimum
-
-    BOOST_FLAG = False
-    if value < BOOST_AMOUNT:
-        value += BOOST_AMOUNT
-        if value > 0:
-            BOOST_FLAG = True
-        else:
-            value = 0
-
-    if value > 0:
-        half = value / 2.0
-        a, b = random.random(), random.random()
-        value = half + (half * a) + (half * b)
-
-    if BOOST_FLAG:
-        value -= BOOST_AMOUNT
-
-    if rev:
-        value = maximum - value
-    else:
-        value = value + minimum
-
-    if chain and random.randint(1, 10) == 10:
-        return mutate_normal(value, minimum=minimum, maximum=maximum,
-                             reverse=reverse, smart=smart, chain=True)
-    else:
-        value = max(minimum, min(value, maximum))
-        if not return_float:
-            value = int(round(value))
-        return value
+        return max(min(int(round(newvalue)), maximum), minimum)
 
 
 def mutate_index(index, length, continuation=None,
