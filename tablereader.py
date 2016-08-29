@@ -18,7 +18,6 @@ GLOBAL_OUTPUT = None
 GLOBAL_TABLE = None
 GLOBAL_LABEL = None
 GRAND_OBJECT_DICT = {}
-NUM_GROUPS_DICT = {}
 
 
 def get_global_label():
@@ -131,15 +130,21 @@ class TableObject(object):
             for obj in self.ranked:
                 yield obj
 
-    def __init__(self, filename=None, pointer=None, groupindex=0, size=None):
+    def __init__(self, filename=None, pointer=None, index=None,
+                 groupindex=0, size=None):
         assert hasattr(self, "specs")
         assert isinstance(self.total_size, int)
+        assert index is not None
         self.filename = filename
         self.pointer = pointer
         self.groupindex = groupindex
         self.variable_size = size
+        self.index = index
         if filename:
             self.read_data(filename, pointer)
+        key = (type(self), self.index)
+        assert key not in GRAND_OBJECT_DICT
+        GRAND_OBJECT_DICT[key] = self
 
     def __eq__(self, other):
         if type(self) is type(other):
@@ -151,6 +156,10 @@ class TableObject(object):
             return False
         assert type(self) is type(other)
         return (self.rank, self.index) < (other.rank, other.index)
+
+    @classproperty
+    def numgroups(cls):
+        return len(cls.groups)
 
     @classproperty
     def specs(cls):
@@ -457,8 +466,7 @@ class TableObject(object):
         elif cls.specsgrouped:
             pointer = cls.specspointer
             f = open(filename, "r+b")
-            numgroups = NUM_GROUPS_DICT[cls]
-            for i in range(numgroups):
+            for i in range(cls.numgroups):
                 objs = [o for o in cls.every if o.groupindex == i]
                 f.seek(pointer)
                 if cls.specs.groupednum is None:
@@ -471,10 +479,10 @@ class TableObject(object):
             pointer = cls.specspointer
             size = cls.specspointedsize
             f = open(filename, "r+b")
-            numgroups = NUM_GROUPS_DICT[cls]
-            pointedpointer = pointer + (numgroups * size)
+            first_pointer = min([o.pointer for o in cls.every])
+            pointedpointer = max(first_pointer, pointer + (cls.numgroups * size))
             mask = (2 ** (8*size)) - 1
-            for i in range(numgroups):
+            for i in range(cls.numgroups):
                 masked = pointedpointer & mask
                 objs = [o for o in cls.every if o.groupindex == i]
                 for o in objs:
@@ -656,11 +664,10 @@ class TableObject(object):
                 or not cls.groupshuffle_enabled):
             return
 
-        numgroups = len(cls.groups)
-        shuffled = range(numgroups)
+        shuffled = range(cls.numgroups)
         random.shuffle(shuffled)
         swapdict = {}
-        for a, b in zip(range(numgroups), shuffled):
+        for a, b in zip(range(cls.numgroups), shuffled):
             a = cls.getgroup(a)
             b = cls.getgroup(b)
             for a1, b1 in zip(a, b):
@@ -694,8 +701,8 @@ def get_table_objects(objtype, filename=None):
             p = pointer
         accumulated_size = 0
         for i in xrange(n):
-            obj = objtype(filename, p, groupindex=groupindex)
-            obj.index = len(objects)
+            obj = objtype(filename, p, index=len(objects),
+                          groupindex=groupindex)
             objects.append(obj)
             p += obj.total_size
             accumulated_size += obj.total_size
@@ -703,8 +710,8 @@ def get_table_objects(objtype, filename=None):
 
     def add_variable_object(p1, p2):
         size = p2 - p1
-        obj = objtype(filename, p1, groupindex=0, size=size)
-        obj.index = len(objects)
+        obj = objtype(filename, p1, index=len(objects),
+                      groupindex=0, size=size)
         objects.append(obj)
         return size
 
@@ -723,7 +730,6 @@ def get_table_objects(objtype, filename=None):
                 value = objtype.specs.groupednum
             pointer += add_objects(value, groupindex=counter)
             counter += 1
-        NUM_GROUPS_DICT[objtype] = counter
     elif pointed and objtype.total_size > 0:
         size = objtype.specspointedsize
         counter = 0
@@ -739,7 +745,6 @@ def get_table_objects(objtype, filename=None):
             add_objects(groupcount, groupindex=counter, p=subpointer)
             pointer += size
             counter += 1
-        NUM_GROUPS_DICT[objtype] = counter
     elif pointed and objtype.total_size == 0:
         size = objtype.specspointedsize
         counter = 0
@@ -753,9 +758,6 @@ def get_table_objects(objtype, filename=None):
             counter += 1
 
     already_gotten[identifier] = objects
-
-    for o in objects:
-        GRAND_OBJECT_DICT[objtype, o.index] = o
 
     return get_table_objects(objtype, filename=filename)
 
