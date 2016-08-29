@@ -485,6 +485,8 @@ class TableObject(object):
             for i in range(cls.numgroups):
                 masked = pointedpointer & mask
                 objs = [o for o in cls.every if o.groupindex == i]
+                if hasattr(cls, "groupsort"):
+                    objs = cls.groupsort(objs)
                 for o in objs:
                     pointedpointer = o.write_data(filename, pointedpointer)
                 f.seek(pointer + (i*size))
