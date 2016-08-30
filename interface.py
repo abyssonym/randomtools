@@ -115,10 +115,16 @@ def run_interface(objects, custom_difficulty=False, snes=False):
     while ".." in outfile:
         outfile = outfile.replace("..", ".")
 
-    if snes:
-        snescopy(sourcefile, outfile)
-    else:
-        copyfile(sourcefile, outfile)
+    try:
+        if snes:
+            snescopy(sourcefile, outfile)
+        else:
+            copyfile(sourcefile, outfile)
+    except (OSError, IOError), e:
+        if e.strerror == "No such file or directory":
+            e.strerror = ('%s; Did you include the filename extension? For '
+                          'example, ".smc", ".sfc", or ".img". ' % e.strerror)
+        raise e
     set_global_output_filename(outfile)
     determine_global_table(outfile)
     set_table_specs()
