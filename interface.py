@@ -32,9 +32,9 @@ def get_flags():
     return flags
 
 
-def rewrite_snes_meta(title, version, megabits, lorom=False):
+def rewrite_snes_meta(title, version, lorom=False):
     rewrite_snes_title("%s %s" % (title, seed), outfile, version, lorom=lorom)
-    rewrite_snes_checksum(outfile, megabits=megabits, lorom=lorom)
+    rewrite_snes_checksum(outfile, lorom=lorom)
 
 
 def snescopy(sourcefile, outfile):

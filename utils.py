@@ -458,20 +458,54 @@ def rewrite_snes_title(text, filename, version, lorom=False):
     f.close()
 
 
-def rewrite_snes_checksum(filename, megabits=24, lorom=False):
-    MEGABIT = 0x20000
+def checksum_calc_sum(data, length):
+    return sum(map(ord, data[:length]))
+
+
+def checksum_mirror_sum(data, length, actual_size, mask=0x80000000):
+    # this is basically an exact copy of the algorithm in snes9x's source
+    while not (actual_size & mask) and mask:
+        mask >>= 1
+    part1 = checksum_calc_sum(data, mask)
+    part2 = 0
+    next_length = actual_size - mask
+    if next_length:
+        part2 = checksum_mirror_sum(data[mask:], next_length, mask >> 1)
+        while (next_length < mask):
+            next_length += next_length
+            part2 += part2
+    return part1 + part2
+
+
+def rewrite_snes_checksum(filename, lorom=False):
     f = open(filename, 'r+b')
-    subsums = [sum(map(ord, f.read(MEGABIT))) for _ in xrange(megabits)]
-    if megabits % 16 != 0:
-        subsums += subsums[-8:]
-    checksum = sum(subsums) & 0xFFFF
+    f.seek(0, 2)
+    actual_size = f.tell()
+    if actual_size & (0x1FFFF):
+        print "WARNING: The rom is a strange size."
+
     if lorom:
-        mask = 0x7FFF
+        rommask = 0x7FFF
     else:
-        mask = 0xFFFF
-    f.seek(0xFFDE & mask)
+        rommask = 0xFFFF
+    expected_header_size = 0x9
+    while actual_size > (1024 << expected_header_size):
+        expected_header_size += 1
+    f.seek(0xFFD7 & rommask)
+    previous_header_size = ord(f.read(1))
+    if previous_header_size != expected_header_size:
+        print "WARNING: Game rom reports incorrect size. Fixing."
+        f.seek(0xFFD7 & rommask)
+        f.write(chr(expected_header_size))
+
+    f.seek(0, 0)
+    data = f.read()
+    checksum = checksum_mirror_sum(data, actual_size, actual_size)
+
+    checksum &= 0xFFFF
+    f.seek(0xFFDE & rommask)
     write_multi(f, checksum, length=2)
-    f.seek(0xFFDC & mask)
+    f.seek(0xFFDC & rommask)
     write_multi(f, checksum ^ 0xFFFF, length=2)
     f.close()
 
