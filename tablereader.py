@@ -198,6 +198,14 @@ class TableObject(object):
         return cls.specs.pointedsize
 
     @classproperty
+    def specsdelimit(cls):
+        return cls.specs.delimit
+
+    @classproperty
+    def specsdelimitval(cls):
+        return cls.specs.delimitval
+
+    @classproperty
     def bitnames(cls):
         return cls.specs.bitnames
 
@@ -460,7 +468,7 @@ class TableObject(object):
 
     @classmethod
     def write_all(cls, filename):
-        if not cls.specsgrouped and not cls.specspointed:
+        if not cls.specsgrouped and not cls.specspointed and not cls.specsdelimit:
             for o in cls.every:
                 o.write_data(filename)
         elif cls.specsgrouped:
@@ -492,6 +500,15 @@ class TableObject(object):
                 f.seek(pointer + (i*size))
                 write_multi(f, masked, length=size)
             f.close()
+        elif cls.specsdelimit:
+            pointer = cls.specspointer
+            lastgroup = None
+            for o in cls.every:
+                if lastgroup is not None and o.groupindex != lastgroup:
+                    f.write(cls.specsdelimitval)
+                    pointer += 1
+                    lastgroup = o.groupindex
+            raise NotImplementedError
 
     def cleanup(self):
         return
@@ -690,6 +707,7 @@ def get_table_objects(objtype, filename=None):
     number = objtype.specscount
     grouped = objtype.specsgrouped
     pointed = objtype.specspointed
+    delimit = objtype.specsdelimit
     identifier = (objtype, pointer, number)
     if identifier in already_gotten:
         return already_gotten[identifier]
@@ -717,7 +735,7 @@ def get_table_objects(objtype, filename=None):
         objects.append(obj)
         return size
 
-    if not grouped and not pointed:
+    if not grouped and not pointed and not delimit:
         add_objects(number)
     elif grouped:
         counter = 0
@@ -758,6 +776,20 @@ def get_table_objects(objtype, filename=None):
             subpointer2 = read_multi(f, size) + objtype.specspointedpointer
             add_variable_object(subpointer, subpointer2)
             counter += 1
+    elif delimit:
+        f = open(filename, 'r+b')
+        for counter in xrange(number):
+            while True:
+                f.seek(pointer)
+                peek = ord(f.read(1))
+                if peek == objtype.specsdelimitval:
+                    pointer += 1
+                    break
+                obj = objtype(filename, pointer, index=len(objects),
+                              groupindex=counter, size=size)
+                objects.append(obj)
+                pointer += size
+        f.close()
 
     already_gotten[identifier] = objects
 
@@ -786,24 +818,36 @@ def set_table_specs(filename=None):
             grouped = True if organization.lower() == "grouped" else False
             pointed = True if organization.lower() == "pointed" else False
             point1 = True if organization.lower() == "point1" else False
+            delimit = True if organization.lower() == "delimit" else False
+            pointdelimit = True if organization.lower() == "pointdelimit" else False
             pointed = pointed or point1
             if pointed:
                 pointedpointer = int(args[0], 0x10)
                 pointedsize = int(args[1]) if len(args) > 1 else 2
             if grouped and len(args) >= 1:
                 groupednum = int(args[0])
+            if delimit:
+                delimitval = int(args[0])
+            if pointdelimit:
+                pointedpointer = int(args[0], 0x10)
+                pointedsize = int(args[1]) if len(args) > 1 else 2
+                delimitval = int(args[0])
         else:
             objname, tablefilename, pointer, count = tuple(line)
             grouped = False
             pointed = False
             point1 = False
+            delimit = False
+            pointdelimit = False
         pointer = int(pointer, 0x10)
         count = int(count)
         TABLE_SPECS[objname] = TableSpecs(path.join(tblpath, tablefilename),
                                           pointer, count, grouped, pointed)
-        if pointed or point1:
+        if pointed or point1 or pointdelimit:
             TABLE_SPECS[objname].pointedpointer = pointedpointer
             TABLE_SPECS[objname].pointedsize = pointedsize
             TABLE_SPECS[objname].pointedpoint1 = point1
         if grouped:
             TABLE_SPECS[objname].groupednum = groupednum
+        if delimit or pointdelimit:
+            TABLE_SPECS[objname].delimitval = delimitval
