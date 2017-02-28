@@ -500,8 +500,10 @@ class TableObject(object):
                 f.seek(pointer)
                 f.write(chr(cls.specsdelimitval))
                 pointer += 1
+            if pointer == cls.specspointedpointer:
+                raise Exception("No objects in pointdelimit data.")
             nullpointer = pointer-1
-            for i in range(cls.numgroups):
+            for i in range(cls.specscount):
                 objs = [o for o in cls.every if o.groupindex == i]
                 if objs:
                     continue
