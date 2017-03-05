@@ -515,10 +515,10 @@ class TableObject(object):
             pointer = cls.specspointer
             size = cls.specspointedsize
             f = open(filename, "r+b")
-            first_pointer = min([o.pointer for o in cls.every])
-            pointedpointer = max(first_pointer, pointer + (cls.numgroups * size))
+            first_pointer = min([o.pointer for o in cls.every if o is not None])
+            pointedpointer = max(first_pointer, pointer + (cls.specscount * size))
             mask = (2 ** (8*size)) - 1
-            for i in range(cls.numgroups):
+            for i in range(cls.specscount):
                 #masked = pointedpointer & mask
                 masked = (pointedpointer-cls.specspointedpointer) & mask
                 objs = [o for o in cls.every if o.groupindex == i]
