@@ -530,14 +530,18 @@ class TableObject(object):
                 write_multi(f, masked, length=size)
             f.close()
         elif cls.specsdelimit:
+            f = open(filename, "r+b")
             pointer = cls.specspointer
-            lastgroup = None
-            for o in cls.every:
-                if lastgroup is not None and o.groupindex != lastgroup:
-                    f.write(cls.specsdelimitval)
-                    pointer += 1
-                    lastgroup = o.groupindex
-            raise NotImplementedError
+            for i in range(cls.specscount):
+                objs = cls.getgroup(i)
+                if hasattr(cls, "groupsort"):
+                    objs = cls.groupsort(objs)
+                for o in objs:
+                    pointer = o.write_data(filename, pointer)
+                f.seek(pointer)
+                f.write(chr(cls.specsdelimitval))
+                pointer += 1
+            f.close()
 
     def cleanup(self):
         return
@@ -838,9 +842,9 @@ def get_table_objects(objtype, filename=None):
                     pointer += 1
                     break
                 obj = objtype(filename, pointer, index=len(objects),
-                              groupindex=counter, size=size)
+                              groupindex=counter, size=None)
                 objects.append(obj)
-                pointer += size
+                pointer += obj.total_size
         f.close()
 
     already_gotten[identifier] = objects
@@ -866,7 +870,7 @@ def set_table_specs(filename=None):
                 organization) = tuple(line[:5])
             args = line[5:]
             if organization.lower() not in ["grouped", "pointed", "point1",
-                                            "pointdelimit"]:
+                                            "pointdelimit", "delimit"]:
                 raise NotImplementedError
             grouped = True if organization.lower() == "grouped" else False
             pointed = True if organization.lower() == "pointed" else False
