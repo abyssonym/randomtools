@@ -11,6 +11,7 @@ try:
 except ImportError:
     tblpath = "tables"
 
+addresses = lambda: None
 
 MASTER_FILENAME = "master.txt"
 TABLE_SPECS = {}
@@ -859,6 +860,13 @@ def set_table_specs(filename=None):
     for line in open(tablesfile):
         line = line.strip()
         if not line or line[0] == "#":
+            continue
+
+        if line[0] == '$':
+            attr, value= line.lstrip('$').strip().split(' ', 1)
+            attr = attr.strip()
+            value = int(value.strip(), 0x10)
+            setattr(addresses, attr, value)
             continue
 
         while "  " in line:
