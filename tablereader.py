@@ -97,6 +97,7 @@ class TableSpecs:
         self.count = count
         self.grouped = grouped
         self.pointed = pointed
+        self.pointedpoint1 = False
         self.delimit = delimit
         for line in open(specfile):
             line = line.strip()
@@ -470,7 +471,8 @@ class TableObject(object):
 
     @classmethod
     def write_all(cls, filename):
-        if not cls.specsgrouped and not cls.specspointed and not cls.specsdelimit:
+        if cls.specspointedpoint1 or not (
+                cls.specsgrouped or cls.specspointed or cls.specsdelimit):
             for o in cls.every:
                 o.write_data(filename)
         elif cls.specsgrouped:
