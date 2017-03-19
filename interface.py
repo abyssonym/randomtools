@@ -86,20 +86,21 @@ def run_interface(objects, custom_difficulty=False, snes=False):
                     break
             else:
                 raise Exception("%s has no flag description." % o.flag)
-    allflags = "".join(sorted([f.flag for f in flagobjects]))
 
-    if flags is None and num_args < 2:
-        print
-        print "Please input the flags for the things you want to randomize."
-        for o in flagobjects:
-            print "    %s  Randomize %s." % (o.flag,
-                                             o.flag_description.lower())
-        print
-        flags = raw_input("Flags? (blank for all) ").strip()
-    elif flags is None:
-        flags = allflags
-    flags = "".join(sorted([f for f in flags if f in allflags]))
-    if not flags:
+    allflags = "".join(sorted([f.flag for f in flagobjects]))
+    if allflags:
+        if flags is None and num_args < 2:
+            print
+            print "Please input the flags for the things you want to randomize."
+            for o in flagobjects:
+                print "    %s  Randomize %s." % (o.flag,
+                                                 o.flag_description.lower())
+            print
+            flags = raw_input("Flags? (blank for all) ").strip()
+        elif flags is None:
+            flags = allflags
+        flags = "".join(sorted([f for f in flags if f in allflags]))
+    if not (allflags and flags):
         flags = allflags
 
     if "." not in sourcefile:
