@@ -181,7 +181,7 @@ def clean_and_write(objects):
 
 def finish_interface():
     print
-    print "Randomization completed sucessfully."
+    print "Randomization completed successfully."
     print "Output filename: %s" % outfile
     print
     if len(argv) < 2:
