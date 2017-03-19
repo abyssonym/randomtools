@@ -150,6 +150,7 @@ def run_interface(objects, custom_difficulty=False, snes=False):
                "and difficulty %s." % (sourcefile, flags, seed, difficulty))
     print
 
+    print "Loading game objects..."
     objects = sort_good_order(objects)
     for o in objects:
         o.every
@@ -173,6 +174,7 @@ def clean_and_write(objects):
         random.seed(seed+1)
         o.full_cleanup()
 
+    print "Saving game objects..."
     for o in objects:
         o.write_all(outfile)
 
