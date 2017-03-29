@@ -151,7 +151,6 @@ class ItemRouter:
             if candidates:
                 break
         chosen = random.choice(sorted(candidates))
-        print chosen, item
         self.assignments[chosen] = item
         new_locations = self.assignable_locations - assignable_locations
         if len(new_locations) <= 1:
