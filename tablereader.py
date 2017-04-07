@@ -19,6 +19,7 @@ GLOBAL_OUTPUT = None
 GLOBAL_TABLE = None
 GLOBAL_LABEL = None
 GRAND_OBJECT_DICT = {}
+PATCH_FILENAMES = []
 
 
 def get_global_label():
@@ -66,6 +67,58 @@ def determine_global_table(outfile):
     print label
     GLOBAL_LABEL = label
     set_global_table_filename(filename)
+
+
+def patch_filename_to_bytecode(patchfilename):
+    patch = {}
+    f = open(path.join(tblpath, patchfilename))
+    for line in f:
+        line = line.strip()
+        if not line or line[0] == '#':
+            continue
+        address, code = line.split(':')
+        address = int(address.strip(), 0x10)
+        code = code.strip()
+        while '  ' in code:
+            code = code.replace('  ', ' ')
+        code = map(lambda s: chr(int(s, 0x10)), code.split())
+        code = ''.join(code)
+        if address in patch:
+            raise Exception("Multiple %x patches used." % address)
+        patch[address] = code
+    f.close()
+    return patch
+
+
+def write_patches(outfile):
+    if not PATCH_FILENAMES:
+        return
+
+    print "Writing patches..."
+    f = open(outfile, 'r+b')
+    for patchfilename in PATCH_FILENAMES:
+        patch = patch_filename_to_bytecode(patchfilename)
+        for address, code in sorted(patch.items()):
+            f.seek(address)
+            f.write(code)
+    f.close()
+
+
+def verify_patches(outfile):
+    if not PATCH_FILENAMES:
+        return
+
+    print "Verifying patches..."
+    f = open(outfile, 'r+b')
+    for patchfilename in PATCH_FILENAMES:
+        patch = patch_filename_to_bytecode(patchfilename)
+        for address, code in sorted(patch.items()):
+            f.seek(address)
+            written = f.read(len(code))
+            if code != written:
+                raise Exception(
+                    "Patch %x conflicts with modified data." % address)
+    f.close()
 
 
 def sort_good_order(objects):
@@ -865,10 +918,16 @@ def set_table_specs(filename=None):
             continue
 
         if line[0] == '$':
-            attr, value= line.lstrip('$').strip().split(' ', 1)
+            attr, value = line.lstrip('$').strip().split(' ', 1)
             attr = attr.strip()
             value = int(value.strip(), 0x10)
             setattr(addresses, attr, value)
+            continue
+
+        if line.startswith(".patch"):
+            _, patchfilename = line.strip().split(' ', 1)
+            patchfilename = patchfilename.strip()
+            PATCH_FILENAMES.append(patchfilename)
             continue
 
         while "  " in line:

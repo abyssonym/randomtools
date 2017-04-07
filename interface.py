@@ -6,7 +6,7 @@ from shutil import copyfile
 
 from randomtools.tablereader import (
     determine_global_table, sort_good_order, set_table_specs,
-    set_global_output_filename)
+    set_global_output_filename, write_patches, verify_patches)
 from randomtools.utils import (
     utilrandom as random, rewrite_snes_title, rewrite_snes_checksum)
 
@@ -129,6 +129,7 @@ def run_interface(objects, custom_difficulty=False, snes=False):
     set_global_output_filename(outfile)
     determine_global_table(outfile)
     set_table_specs()
+    write_patches(outfile)
 
     if not custom_difficulty:
         difficulty = 1.0
@@ -178,6 +179,8 @@ def clean_and_write(objects):
     print "Saving game objects..."
     for o in objects:
         o.write_all(outfile)
+
+    verify_patches(outfile)
 
 
 def finish_interface():
