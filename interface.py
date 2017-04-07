@@ -129,7 +129,6 @@ def run_interface(objects, custom_difficulty=False, snes=False):
     set_global_output_filename(outfile)
     determine_global_table(outfile)
     set_table_specs()
-    write_patches(outfile)
 
     if not custom_difficulty:
         difficulty = 1.0
@@ -152,6 +151,7 @@ def run_interface(objects, custom_difficulty=False, snes=False):
                "and difficulty %s." % (sourcefile, flags, seed, difficulty))
     print
 
+    write_patches(outfile)
     print "Loading game objects..."
     objects = sort_good_order(objects)
     for o in objects:
