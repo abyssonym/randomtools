@@ -167,7 +167,8 @@ def sort_good_order(objects):
 
 class TableSpecs:
     def __init__(self, specfile, pointer=None, count=None,
-                 grouped=False, pointed=False, delimit=False):
+                 grouped=False, pointed=False, delimit=False,
+                 pointerfilename=None):
         self.attributes = []
         self.bitnames = {}
         self.total_size = 0
@@ -177,6 +178,7 @@ class TableSpecs:
         self.pointed = pointed
         self.pointedpoint1 = False
         self.delimit = delimit
+        self.pointerfilename=pointerfilename
         for line in open(specfile):
             line = line.strip()
             if not line or line[0] == "#":
@@ -285,6 +287,10 @@ class TableObject(object):
     @classproperty
     def specsdelimitval(cls):
         return cls.specs.delimitval
+
+    @classproperty
+    def specspointerfilename(cls):
+        return cls.specs.pointerfilename
 
     @classproperty
     def bitnames(cls):
@@ -822,6 +828,7 @@ def get_table_objects(objtype, filename=None):
     grouped = objtype.specsgrouped
     pointed = objtype.specspointed
     delimit = objtype.specsdelimit
+    pointerfilename = objtype.specspointerfilename
     identifier = (objtype, pointer, number)
     if identifier in already_gotten:
         return already_gotten[identifier]
@@ -849,7 +856,14 @@ def get_table_objects(objtype, filename=None):
         objects.append(obj)
         return size
 
-    if not grouped and not pointed and not delimit:
+    if pointerfilename is not None:
+        for line in open(path.join(tblpath, pointerfilename)):
+            line = line.strip()
+            if not line or line[0] == '#':
+                continue
+            pointer = int(line.split()[0], 0x10)
+            add_objects(1, p=pointer)
+    elif not grouped and not pointed and not delimit:
         add_objects(number)
     elif grouped:
         counter = 0
@@ -961,6 +975,7 @@ def set_table_specs(filename=None):
             line = line.replace("  ", " ")
         line = line.split()
         groupednum = None
+        pointerfilename = None
         if len(line) >= 5:
             (objname, tablefilename, pointer, count,
                 organization) = tuple(line[:5])
@@ -987,17 +1002,20 @@ def set_table_specs(filename=None):
                 pointedsize = int(args[1]) if len(args) > 1 else 2
                 delimitval = int(args[2])
         else:
-            objname, tablefilename, pointer, count = tuple(line)
             grouped = False
             pointed = False
             point1 = False
             delimit = False
             pointdelimit = False
-        pointer = int(pointer, 0x10)
-        count = int(count)
+            if len(line) <= 3:
+                objname, tablefilename, pointerfilename = tuple(line)
+            else:
+                objname, tablefilename, pointer, count = tuple(line)
+                pointer = int(pointer, 0x10)
+                count = int(count)
         TABLE_SPECS[objname] = TableSpecs(path.join(tblpath, tablefilename),
                                           pointer, count, grouped, pointed,
-                                          delimit)
+                                          delimit, pointerfilename)
         if pointed or point1 or pointdelimit:
             TABLE_SPECS[objname].pointedpointer = pointedpointer
             TABLE_SPECS[objname].pointedsize = pointedsize

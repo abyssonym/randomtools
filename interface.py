@@ -8,7 +8,8 @@ from randomtools.tablereader import (
     determine_global_table, sort_good_order, set_table_specs,
     set_global_output_filename, select_patches, write_patches, verify_patches)
 from randomtools.utils import (
-    utilrandom as random, rewrite_snes_title, rewrite_snes_checksum)
+    utilrandom as random, rewrite_snes_title, rewrite_snes_checksum,
+    md5hash)
 
 sourcefile = None
 outfile = None
@@ -190,6 +191,7 @@ def finish_interface():
     print
     print "Randomization completed successfully."
     print "Output filename: %s" % outfile
+    print "MD5 hash: %s" % md5hash(outfile)
     print
     if len(argv) < 2:
         raw_input("Press Enter to close this program. ")
