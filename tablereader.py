@@ -20,6 +20,7 @@ GLOBAL_TABLE = None
 GLOBAL_LABEL = None
 GRAND_OBJECT_DICT = {}
 PATCH_FILENAMES = []
+OPTION_FILENAMES = []
 
 
 def get_global_label():
@@ -88,6 +89,30 @@ def patch_filename_to_bytecode(patchfilename):
         patch[address] = code
     f.close()
     return patch
+
+
+def select_patches():
+    if not OPTION_FILENAMES:
+        return
+
+    print
+    print "The following optional patches are available."
+    for i, patchfilename in enumerate(OPTION_FILENAMES):
+        print "%s: %s" % (i+1, patchfilename.split('.')[0])
+    print
+    s = raw_input("Select which patches to use, separated by a space."
+                  "\n(0 for none, blank for all): ")
+    print
+    s = s.strip()
+    if not s:
+        return
+    while '  ' in s:
+        s = s.replace('  ', ' ')
+    numbers = map(int, s.split())
+    options = [o for (i, o) in enumerate(OPTION_FILENAMES) if i+1 in numbers]
+    not_chosen = set(OPTION_FILENAMES) - set(options)
+    for pfn in not_chosen:
+        PATCH_FILENAMES.remove(pfn)
 
 
 def write_patches(outfile):
@@ -924,10 +949,12 @@ def set_table_specs(filename=None):
             setattr(addresses, attr, value)
             continue
 
-        if line.startswith(".patch"):
+        if line.startswith(".patch") or line.startswith(".option"):
             _, patchfilename = line.strip().split(' ', 1)
             patchfilename = patchfilename.strip()
             PATCH_FILENAMES.append(patchfilename)
+            if line.startswith(".option"):
+                OPTION_FILENAMES.append(patchfilename)
             continue
 
         while "  " in line:

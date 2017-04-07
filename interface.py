@@ -6,7 +6,7 @@ from shutil import copyfile
 
 from randomtools.tablereader import (
     determine_global_table, sort_good_order, set_table_specs,
-    set_global_output_filename, write_patches, verify_patches)
+    set_global_output_filename, select_patches, write_patches, verify_patches)
 from randomtools.utils import (
     utilrandom as random, rewrite_snes_title, rewrite_snes_checksum)
 
@@ -140,6 +140,9 @@ def run_interface(objects, custom_difficulty=False, snes=False):
     if difficulty is None or difficulty == "":
         difficulty = 1.0
     difficulty = float(difficulty)
+
+    if num_args < 3:
+        select_patches()
 
     if flags == allflags:
         flags = string.lowercase
