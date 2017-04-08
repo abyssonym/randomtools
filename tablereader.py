@@ -1011,8 +1011,8 @@ def set_table_specs(filename=None):
                 objname, tablefilename, pointerfilename = tuple(line)
             else:
                 objname, tablefilename, pointer, count = tuple(line)
-                pointer = int(pointer, 0x10)
-                count = int(count)
+        pointer = int(pointer, 0x10)
+        count = int(count)
         TABLE_SPECS[objname] = TableSpecs(path.join(tblpath, tablefilename),
                                           pointer, count, grouped, pointed,
                                           delimit, pointerfilename)
