@@ -105,7 +105,7 @@ class ItemRouter:
         useful = []
         for req in requirements:
             self.assignments[None] = req
-            if len(self.assignable_locations) > num_locations_baseline:
+            if len(self.assignable_locations) > num_locations_baseline+1:
                 useful.append(req)
         if None in self.assignments:
             del(self.assignments[None])
