@@ -99,19 +99,6 @@ class ItemRouter:
                 if count > 0 and req not in self.assigned_items]
 
     @property
-    def useful_ranked_requirements(self):
-        requirements = self.ranked_requirements
-        num_locations_baseline = len(self.assignable_locations)
-        useful = []
-        for req in requirements:
-            self.assignments[None] = req
-            if len(self.assignable_locations) > num_locations_baseline+1:
-                useful.append(req)
-        if None in self.assignments:
-            del(self.assignments[None])
-        return useful
-
-    @property
     def assigned_items(self):
         return set(self.assignments.values())
 
@@ -127,6 +114,13 @@ class ItemRouter:
         assignable -= self.assigned_locations
         return assignable
 
+    def get_item_unlocked_locations(self, item):
+        baseline_locations = self.assignable_locations
+        self.assignments[None] = item
+        unlocked_locations = self.assignable_locations - baseline_locations
+        del(self.assignments[None])
+        return unlocked_locations
+
     @property
     def unreachable_locations(self):
         return set([
@@ -135,28 +129,42 @@ class ItemRouter:
             k not in self.assigned_locations and
             k not in self.definitions])
 
-    def assign_item(self, item, relaxed=False):
+    def assign_item(self, item):
         assignable_locations = self.assignable_locations
         if not hasattr(self, "location_ranks"):
             self.location_ranks = defaultdict(set)
             self.location_ranks[0] = assignable_locations
         if not assignable_locations:
             raise Exception("No assignable locations.")
-        max_rank = max(self.location_ranks)
-        while True:
-            rank = random.randint(random.randint(0, max_rank), max_rank)
-            if not relaxed:
-                rank = random.randint(rank, max_rank)
-            candidates = assignable_locations & self.location_ranks[rank]
-            if candidates:
-                break
-        chosen = random.choice(sorted(candidates))
-        self.assignments[chosen] = item
-        new_locations = self.assignable_locations - assignable_locations
-        if len(new_locations) <= 1:
-            self.location_ranks[max_rank] |= new_locations
+
+        new_locations = self.get_item_unlocked_locations(item)
+        if new_locations:
+            relaxed = False
         else:
-            self.location_ranks[max_rank+1] = new_locations
+            relaxed = True
+
+        max_rank = max(self.location_ranks)
+        candidates = []
+        for i in xrange(max_rank+1):
+            temp = sorted(self.location_ranks[i] & assignable_locations)
+            random.shuffle(temp)
+            candidates += temp
+
+        max_index = len(candidates)-1
+        index = random.randint(
+            random.randint(0, max_index), max_index)
+        if not relaxed:
+            index = random.randint(
+                random.randint(index, max_index), max_index)
+        chosen = candidates[index]
+        rank = [i for i in self.location_ranks
+                if chosen in self.location_ranks[i]]
+        assert len(rank) == 1
+        rank = rank[0]
+
+        #print item, chosen, rank, max_rank, relaxed
+        self.assignments[chosen] = item
+        self.location_ranks[max_rank+1] = new_locations
 
     def get_location_rank(self, location):
         for i in sorted(self.location_ranks):
@@ -165,21 +173,40 @@ class ItemRouter:
         return None
 
     def choose_item(self):
-        requirements = self.useful_ranked_requirements
-        if not requirements:
-            requirements = self.ranked_requirements
-        if not requirements:
+        requirements = sorted([r for r in self.ranked_requirements
+                               if r not in self.assigned_items])
+        unlocked = {}
+        for r in requirements:
+            unlocked[r] = self.get_item_unlocked_locations(r)
+        candidates = [r for r in requirements if len(unlocked[r]) > 0]
+        if not candidates:
+            candidates = requirements
+        if not candidates:
             return None
-        max_index = len(requirements)-1
-        index = random.randint(0, random.randint(0, max_index))
-        return requirements[index]
+        chosen = random.choice(candidates)
+        if len(unlocked[chosen]) > 0:
+            candidates = [r for r in requirements
+                          if unlocked[r]
+                          and unlocked[r] <= unlocked[chosen]
+                          and r not in self.assigned_items]
+            if len(candidates) > 1:
+                candidates = sorted(
+                    candidates,
+                    key=lambda r: (len(unlocked[r]), random.random(), r))
+                max_index = len(candidates)-1
+                index = random.randint(
+                    0, random.randint(0, random.randint(0, max_index)))
+                chosen = candidates[index]
+        return chosen
 
     def assign_everything(self):
         while True:
             item = self.choose_item()
             if item is None:
                 break
+            assert item not in self.assigned_items
             self.assign_item(item)
+            assert item in self.assigned_items
 
     def clear_assignments(self):
         delattr(self, "location_ranks")
