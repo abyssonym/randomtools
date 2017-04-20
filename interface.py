@@ -14,6 +14,7 @@ from randomtools.utils import (
 sourcefile = None
 outfile = None
 flags = None
+user_input_flags = None
 seed = None
 difficulty = None
 
@@ -31,6 +32,11 @@ def get_seed():
 def get_flags():
     global flags
     return flags
+
+
+def get_user_input_flags():
+    global user_input_flags
+    return user_input_flags
 
 
 def rewrite_snes_meta(title, version, lorom=False):
@@ -57,7 +63,7 @@ def snescopy(sourcefile, outfile):
 
 
 def run_interface(objects, custom_difficulty=False, snes=False):
-    global sourcefile, outfile, flags, seed, difficulty
+    global sourcefile, outfile, flags, user_input_flags, seed, difficulty
 
     args = list(argv)[:5]
     num_args = len(args)
@@ -89,6 +95,7 @@ def run_interface(objects, custom_difficulty=False, snes=False):
                 raise Exception("%s has no flag description." % o.flag)
 
     allflags = "".join(sorted([f.flag for f in flagobjects]))
+    user_input_flags = flags
     if allflags:
         if flags is None and num_args < 2:
             print
@@ -98,6 +105,7 @@ def run_interface(objects, custom_difficulty=False, snes=False):
                                                  o.flag_description.lower())
             print
             flags = raw_input("Flags? (blank for all) ").strip()
+            user_input_flags = flags
         elif flags is None:
             flags = allflags
         flags = "".join(sorted([f for f in flags if f in allflags]))
@@ -154,6 +162,9 @@ def run_interface(objects, custom_difficulty=False, snes=False):
         print ("Randomizing %s with flags '%s' using seed %s "
                "and difficulty %s." % (sourcefile, flags, seed, difficulty))
     print
+
+    if user_input_flags is None:
+        user_input_flags = flags
 
     write_patches(outfile)
     print "Loading game objects..."
