@@ -164,7 +164,8 @@ class ItemRouter:
 
         #print item, chosen, rank, max_rank, relaxed
         self.assignments[chosen] = item
-        self.location_ranks[max_rank+1] = new_locations
+        if new_locations:
+            self.location_ranks[max_rank+1] = new_locations
 
     def get_location_rank(self, location):
         for i in sorted(self.location_ranks):
