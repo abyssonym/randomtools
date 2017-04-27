@@ -179,6 +179,10 @@ class ItemRouter:
                 return i
         return None
 
+    def get_item_rank(self, item):
+        location = self.get_assigned_location(item)
+        return self.get_location_rank(location)
+
     def choose_item(self, aggression=3):
         requirements = sorted([r for r in self.ranked_requirements
                                if r not in self.assigned_items])
