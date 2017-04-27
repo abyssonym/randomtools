@@ -17,6 +17,7 @@ flags = None
 user_input_flags = None
 seed = None
 difficulty = None
+activated_codes = None
 
 
 def get_outfile():
@@ -37,6 +38,11 @@ def get_flags():
 def get_user_input_flags():
     global user_input_flags
     return user_input_flags
+
+
+def get_activated_codes():
+    global activated_codes
+    return activated_codes
 
 
 def rewrite_snes_meta(title, version, lorom=False):
@@ -62,8 +68,13 @@ def snescopy(sourcefile, outfile):
         raise Exception("Inappropriate file size for SNES rom file.")
 
 
-def run_interface(objects, custom_difficulty=False, snes=False):
-    global sourcefile, outfile, flags, user_input_flags, seed, difficulty
+def run_interface(objects, custom_difficulty=False, snes=False, codes=None):
+    global sourcefile, outfile, flags, user_input_flags, seed
+    global difficulty, activated_codes
+
+    if codes is None:
+        codes = {}
+    activated_codes = set([])
 
     args = list(argv)[:5]
     num_args = len(args)
@@ -108,6 +119,20 @@ def run_interface(objects, custom_difficulty=False, snes=False):
             user_input_flags = flags
         elif flags is None:
             flags = allflags
+
+    if flags:
+        flags = flags.lower()
+        for code, code_options in sorted(codes.items()):
+            if isinstance(code_options, basestring):
+                code_options = [code_options]
+            for co in code_options:
+                co = co.lower()
+                if co in flags:
+                    flags = flags.replace(co, "")
+                    activated_codes.add(code)
+                    break
+
+    if flags and allflags:
         flags = "".join(sorted([f for f in flags if f in allflags]))
     if not (allflags and flags):
         flags = allflags
