@@ -114,6 +114,12 @@ class ItemRouter:
         assignable -= self.assigned_locations
         return assignable
 
+    def get_assigned_location(self, item):
+        for key, value in self.assignments.items():
+            if value == item:
+                return key
+        return None
+
     def get_item_unlocked_locations(self, item):
         baseline_locations = self.assignable_locations
         self.assignments[None] = item
@@ -129,7 +135,7 @@ class ItemRouter:
             k not in self.assigned_locations and
             k not in self.definitions])
 
-    def assign_item(self, item):
+    def assign_item(self, item, aggression=3):
         assignable_locations = self.assignable_locations
         if not hasattr(self, "location_ranks"):
             self.location_ranks = defaultdict(set)
@@ -138,10 +144,8 @@ class ItemRouter:
             raise Exception("No assignable locations.")
 
         new_locations = self.get_item_unlocked_locations(item)
-        if new_locations:
-            relaxed = False
-        else:
-            relaxed = True
+        if not new_locations:
+            aggression -= 1
 
         max_rank = max(self.location_ranks)
         candidates = []
@@ -151,21 +155,23 @@ class ItemRouter:
             candidates += temp
 
         max_index = len(candidates)-1
-        index = random.randint(
-            random.randint(0, max_index), max_index)
-        if not relaxed:
-            index = random.randint(
-                random.randint(index, max_index), max_index)
+        index = 0
+        for _ in xrange(aggression):
+            index = random.randint(index, max_index)
         chosen = candidates[index]
         rank = [i for i in self.location_ranks
                 if chosen in self.location_ranks[i]]
         assert len(rank) == 1
         rank = rank[0]
 
-        #print item, chosen, rank, max_rank, relaxed
         self.assignments[chosen] = item
         if new_locations:
             self.location_ranks[max_rank+1] = new_locations
+
+    def unassign_item(self, item):
+        location = self.get_assigned_location(item)
+        del(self.assignments[location])
+        assert self.get_assigned_location(item) is None
 
     def get_location_rank(self, location):
         for i in sorted(self.location_ranks):
@@ -173,7 +179,7 @@ class ItemRouter:
                 return i
         return None
 
-    def choose_item(self):
+    def choose_item(self, aggression=3):
         requirements = sorted([r for r in self.ranked_requirements
                                if r not in self.assigned_items])
         unlocked = {}
@@ -195,18 +201,19 @@ class ItemRouter:
                     candidates,
                     key=lambda r: (len(unlocked[r]), random.random(), r))
                 max_index = len(candidates)-1
-                index = random.randint(
-                    0, random.randint(0, random.randint(0, max_index)))
+                index = max_index
+                for _ in xrange(aggression):
+                    index = random.randint(0, index)
                 chosen = candidates[index]
         return chosen
 
-    def assign_everything(self):
+    def assign_everything(self, aggression=3):
         while True:
-            item = self.choose_item()
+            item = self.choose_item(aggression=aggression)
             if item is None:
                 break
             assert item not in self.assigned_items
-            self.assign_item(item)
+            self.assign_item(item, aggression=aggression)
             assert item in self.assigned_items
 
     def clear_assignments(self):
