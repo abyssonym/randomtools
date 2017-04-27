@@ -145,7 +145,7 @@ class ItemRouter:
 
         new_locations = self.get_item_unlocked_locations(item)
         if not new_locations:
-            aggression -= 1
+            aggression = max(aggression-1, 1)
 
         max_rank = max(self.location_ranks)
         candidates = []
@@ -202,7 +202,7 @@ class ItemRouter:
                     key=lambda r: (len(unlocked[r]), random.random(), r))
                 max_index = len(candidates)-1
                 index = max_index
-                for _ in xrange(aggression):
+                for _ in xrange(max(aggression-1, 1)):
                     index = random.randint(0, index)
                 chosen = candidates[index]
         return chosen
