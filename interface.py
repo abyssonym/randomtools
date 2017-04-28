@@ -42,7 +42,7 @@ def get_user_input_flags():
 
 def get_activated_codes():
     global activated_codes
-    return activated_codes
+    return sorted(activated_codes)
 
 
 def rewrite_snes_meta(title, version, lorom=False):
