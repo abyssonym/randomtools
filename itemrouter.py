@@ -6,6 +6,7 @@ class ItemRouter:
         self.definitions = set([])
         self.assign_conditions = {}
         self.assignments = {}
+        self.preferences = {}
 
         created_lambdas = []
         f = open(requirefile)
@@ -19,6 +20,12 @@ class ItemRouter:
             if line.startswith(".def "):
                 line = line[5:]
                 definition = True
+            elif line.startswith(".prefer "):
+                line = line[8:]
+                preferred, items = line.split(' ')
+                items = items.split(',')
+                self.preferences[preferred] = items
+                continue
             else:
                 definition = False
 
@@ -135,6 +142,22 @@ class ItemRouter:
             k not in self.assigned_locations and
             k not in self.definitions])
 
+    def sort_by_item_usage(self, locations):
+        fail_counter = defaultdict(int)
+        for item in self.assigned_items:
+            remember_location = self.get_assigned_location(item)
+            del(self.assignments[remember_location])
+            assignable_locations = self.assignable_locations
+            for l in locations:
+                if l not in assignable_locations:
+                    fail_counter[l] += 1
+            self.assignments[remember_location] = item
+        locations = sorted(locations,
+                           key=lambda l: (fail_counter[l],
+                                          self.get_location_rank(l),
+                                          random.random()))
+        return locations
+
     def assign_item(self, item, aggression=3):
         assignable_locations = self.assignable_locations
         if not hasattr(self, "location_ranks"):
@@ -149,21 +172,29 @@ class ItemRouter:
 
         max_rank = max(self.location_ranks)
         candidates = []
-        for i in xrange(max_rank+1):
-            temp = sorted(self.location_ranks[i] & assignable_locations)
-            random.shuffle(temp)
+        for i in xrange(max_rank-1):
+            temp = self.location_ranks[i] & assignable_locations
             candidates += temp
+        candidates = (self.sort_by_item_usage(candidates) +
+                      self.sort_by_item_usage(
+                          (self.location_ranks[max_rank-1] |
+                           self.location_ranks[max_rank]) &
+                          assignable_locations))
 
         max_index = len(candidates)-1
         index = 0
         for _ in xrange(aggression):
             index = random.randint(index, max_index)
+        if index >= max_index-1 and max_index >= 1:
+            index = random.choice([max_index, max_index-1])
         chosen = candidates[index]
         rank = [i for i in self.location_ranks
                 if chosen in self.location_ranks[i]]
         assert len(rank) == 1
         rank = rank[0]
 
+        #print item, chosen, rank, max_rank, index, max_index, aggression
+        #import pdb; pdb.set_trace()
         self.assignments[chosen] = item
         if new_locations:
             self.location_ranks[max_rank+1] = new_locations
@@ -198,17 +229,26 @@ class ItemRouter:
         if len(unlocked[chosen]) > 0:
             candidates = [r for r in requirements
                           if unlocked[r]
-                          and unlocked[r] <= unlocked[chosen]
+                          and unlocked[r] < unlocked[chosen]
                           and r not in self.assigned_items]
-            if len(candidates) > 1:
-                candidates = sorted(
-                    candidates,
-                    key=lambda r: (len(unlocked[r]), random.random(), r))
-                max_index = len(candidates)-1
-                index = max_index
-                for _ in xrange(max(aggression-1, 1)):
-                    index = random.randint(0, index)
-                chosen = candidates[index]
+            if len(candidates) > 0:
+                while True:
+                    candidates = [c for c in candidates
+                                  if unlocked[c]
+                                  and unlocked[c] < unlocked[chosen]
+                                  and c not in self.assigned_items]
+                    if not candidates:
+                        break
+                    c = random.choice(candidates)
+                    if (chosen in self.preferences
+                            and c in self.preferences[chosen]):
+                        candidates.remove(c)
+                        continue
+                    ratio = len(unlocked[c]) / float(len(unlocked[chosen]))
+                    ratio = ratio ** aggression
+                    if random.random() > ratio:
+                        chosen = c
+                    candidates.remove(c)
         return chosen
 
     def assign_everything(self, aggression=3):
