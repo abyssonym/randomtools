@@ -127,11 +127,17 @@ class ItemRouter:
                 return key
         return None
 
-    def get_item_unlocked_locations(self, item):
+    def get_item_unlocked_locations(self, items):
+        if isinstance(items, basestring):
+            items = [items]
         baseline_locations = self.assignable_locations
-        self.assignments[None] = item
+        for item in items:
+            key = "_temp_%s" % item
+            self.assignments[key] = item
         unlocked_locations = self.assignable_locations - baseline_locations
-        del(self.assignments[None])
+        for item in items:
+            key = "_temp_%s" % item
+            del(self.assignments[key])
         return unlocked_locations
 
     @property
@@ -215,16 +221,48 @@ class ItemRouter:
         return self.get_location_rank(location)
 
     def choose_item(self, aggression=3):
+        if hasattr(self, "item_set_in_progress") and self.item_set_in_progress:
+            chosen = random.choice(self.item_set_in_progress)
+            self.item_set_in_progress.remove(chosen)
+            return chosen
+
         requirements = sorted([r for r in self.ranked_requirements
                                if r not in self.assigned_items])
         unlocked = {}
         for r in requirements:
             unlocked[r] = self.get_item_unlocked_locations(r)
         candidates = [r for r in requirements if len(unlocked[r]) > 0]
-        if not candidates:
-            candidates = requirements
+
+        unused = [r for r in requirements if r not in candidates]
+        unused_unlocked = self.get_item_unlocked_locations(unused)
+        if unused_unlocked:
+            random.shuffle(unused)
+            for u in list(unused):
+                if u not in unused:
+                    continue
+                unused.remove(u)
+                temp = self.get_item_unlocked_locations(unused)
+                if temp:
+                    failure = False
+                    for key in unlocked:
+                        if (set(unlocked[key]) >= set(temp) or
+                                (unlocked[key]
+                                 and set(unlocked[key]) <= set(temp))):
+                            failure = True
+                            break
+                    if failure:
+                        unused = []
+                        break
+                if not temp:
+                    unused.append(u)
+            if unused:
+                key = tuple(sorted(unused))
+                unlocked[key] = self.get_item_unlocked_locations(key)
+                candidates.append(key)
+
         if not candidates:
             return None
+
         chosen = random.choice(candidates)
         if len(unlocked[chosen]) > 0:
             candidates = [r for r in requirements
@@ -249,6 +287,11 @@ class ItemRouter:
                     if random.random() > ratio:
                         chosen = c
                     candidates.remove(c)
+
+        if not isinstance(chosen, basestring):
+            self.item_set_in_progress = sorted(chosen)
+            return self.choose_item(aggression=aggression)
+
         return chosen
 
     def assign_everything(self, aggression=3):
