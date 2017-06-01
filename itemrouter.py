@@ -166,9 +166,6 @@ class ItemRouter:
 
     def assign_item(self, item, aggression=3):
         assignable_locations = self.assignable_locations
-        if not hasattr(self, "location_ranks"):
-            self.location_ranks = defaultdict(set)
-            self.location_ranks[0] = assignable_locations
         if not assignable_locations:
             raise Exception("No assignable locations.")
 
@@ -194,14 +191,19 @@ class ItemRouter:
         if index >= max_index-1 and max_index >= 1:
             index = random.choice([max_index, max_index-1])
         chosen = candidates[index]
+
         rank = [i for i in self.location_ranks
                 if chosen in self.location_ranks[i]]
         assert len(rank) == 1
         rank = rank[0]
-
         #print item, chosen, rank, max_rank, index, max_index, aggression
-        #import pdb; pdb.set_trace()
-        self.assignments[chosen] = item
+        self.assign_item_location(item, chosen)
+
+    def assign_item_location(self, item, location):
+        #print "-", item, location
+        new_locations = self.get_item_unlocked_locations(item)
+        max_rank = max(self.location_ranks)
+        self.assignments[location] = item
         if new_locations:
             self.location_ranks[max_rank+1] = new_locations
 
@@ -227,7 +229,8 @@ class ItemRouter:
             return chosen
 
         requirements = sorted([r for r in self.ranked_requirements
-                               if r not in self.assigned_items])
+                               if r not in self.assigned_items
+                               and r not in self.custom_assignments.values()])
         unlocked = {}
         for r in requirements:
             unlocked[r] = self.get_item_unlocked_locations(r)
@@ -295,14 +298,43 @@ class ItemRouter:
         return chosen
 
     def assign_everything(self, aggression=3):
+        if not hasattr(self, "custom_assignments"):
+            self.custom_assignments = {}
+        if not hasattr(self, "location_ranks"):
+            self.location_ranks = defaultdict(set)
+            self.location_ranks[0] = self.assignable_locations
         while True:
+            if self.check_custom():
+                continue
             item = self.choose_item(aggression=aggression)
             if item is None:
                 break
             assert item not in self.assigned_items
             self.assign_item(item, aggression=aggression)
             assert item in self.assigned_items
+        self.force_custom()
 
     def clear_assignments(self):
         delattr(self, "location_ranks")
         self.assignments = {}
+
+    def set_custom_assignments(self, custom_assignments):
+        self.custom_assignments = dict(custom_assignments)
+
+    @property
+    def unassigned_custom_assignments(self):
+        return sorted(self.custom_assignments.items())
+
+    def check_custom(self):
+        locations = self.custom_assignments.keys()
+        locations = set(locations) & set(self.assignable_locations)
+        for l in locations:
+            self.assign_item_location(self.custom_assignments[l], l)
+            del(self.custom_assignments[l])
+        if locations:
+            return True
+        return False
+
+    def force_custom(self):
+        for l, item in self.unassigned_custom_assignments:
+            self.assignments[l] = item
