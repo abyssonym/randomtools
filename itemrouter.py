@@ -1,6 +1,8 @@
 from randomtools.utils import utilrandom as random
 from collections import defaultdict
 
+class ItemRouterException(Exception): pass
+
 class ItemRouter:
     def __init__(self, requirefile):
         self.definitions = set([])
@@ -167,7 +169,8 @@ class ItemRouter:
     def assign_item(self, item, aggression=3):
         assignable_locations = self.assignable_locations
         if not assignable_locations:
-            raise Exception("No assignable locations.")
+            self.force_custom()
+            raise ItemRouterException("No assignable locations: %s." % item)
 
         new_locations = self.get_item_unlocked_locations(item)
         if not new_locations:
@@ -323,7 +326,8 @@ class ItemRouter:
 
     @property
     def unassigned_custom_assignments(self):
-        return sorted(self.custom_assignments.items())
+        return sorted([(k, v) for (k, v) in self.custom_assignments.items()
+                       if k not in self.assignments])
 
     def check_custom(self):
         locations = self.custom_assignments.keys()
@@ -338,3 +342,4 @@ class ItemRouter:
     def force_custom(self):
         for l, item in self.unassigned_custom_assignments:
             self.assignments[l] = item
+            del(self.custom_assignments[l])
