@@ -160,7 +160,7 @@ class ItemRouter:
                 if l not in assignable_locations:
                     fail_counter[l] += 1
             self.assignments[remember_location] = item
-        locations = sorted(locations,
+        locations = sorted(sorted(locations),
                            key=lambda l: (fail_counter[l],
                                           self.get_location_rank(l),
                                           random.random()))
