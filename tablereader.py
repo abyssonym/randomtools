@@ -976,6 +976,8 @@ def set_table_specs(filename=None):
         line = line.split()
         groupednum = None
         pointerfilename = None
+        pointer = None
+        count = None
         if len(line) >= 5:
             (objname, tablefilename, pointer, count,
                 organization) = tuple(line[:5])
@@ -1011,9 +1013,10 @@ def set_table_specs(filename=None):
                 objname, tablefilename, pointerfilename = tuple(line)
             else:
                 objname, tablefilename, pointer, count = tuple(line)
-        if isinstance(pointer, basestring):
+        if pointer is not None and isinstance(pointer, basestring):
             pointer = int(pointer, 0x10)
-        count = int(count)
+        if count is not None:
+            count = int(count)
         TABLE_SPECS[objname] = TableSpecs(path.join(tblpath, tablefilename),
                                           pointer, count, grouped, pointed,
                                           delimit, pointerfilename)
