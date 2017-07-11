@@ -1,7 +1,8 @@
 from utils import (read_multi, write_multi, classproperty,
-                   mutate_normal, mutate_bits, random, md5hash)
+                   random, md5hash)
 from functools import total_ordering
 from os import path
+from hashlib import md5
 import string
 
 
@@ -21,6 +22,8 @@ GLOBAL_LABEL = None
 GRAND_OBJECT_DICT = {}
 PATCH_FILENAMES = []
 OPTION_FILENAMES = []
+RANDOM_DEGREE = 0.25
+SEED = None
 
 
 def get_global_label():
@@ -36,6 +39,16 @@ def set_global_output_filename(filename):
 def set_global_table_filename(filename):
     global GLOBAL_TABLE
     GLOBAL_TABLE = filename
+
+
+def get_seed():
+    global SEED
+    return SEED
+
+
+def set_seed(seed):
+    global SEED
+    SEED = seed
 
 
 def determine_global_table(outfile):
@@ -163,6 +176,70 @@ def sort_good_order(objects):
         if not changed:
             break
     return objects
+
+
+def set_random_degree(value):
+    global RANDOM_DEGREE
+    RANDOM_DEGREE = value
+
+
+def get_random_degree():
+    global RANDOM_DEGREE
+    return RANDOM_DEGREE
+
+
+def gen_random_normal():
+    value_a = (random.random() + random.random() + random.random()) / 3.0
+    value_b = random.random()
+    value_c = 0.5
+    if get_random_degree() > 0.5:
+        factor = (get_random_degree() * 2) - 1
+        return (value_a * (1-factor)) + (value_b * factor)
+    else:
+        factor = get_random_degree() * 2
+        return (value_c * (1-factor)) + (value_a * factor)
+
+
+def mutate_normal(base, minimum, maximum, return_float=False):
+    assert minimum <= base <= maximum
+    if minimum == maximum:
+        return base
+    baseval = base-minimum
+    width = maximum-minimum
+    factor = gen_random_normal()
+    maxwidth = max(baseval, width-baseval)
+    minwidth = min(baseval, width-baseval)
+    width_factor = 1.0
+    for _ in xrange(7):
+        width_factor *= random.uniform(get_random_degree(), width_factor)
+    subwidth = (minwidth * (1-width_factor)) + (maxwidth * width_factor)
+    if factor > 0.5:
+        subfactor = (factor-0.5) * 2
+        modifier = subwidth * subfactor
+        value = baseval + modifier
+    else:
+        subfactor = 1- (factor * 2)
+        modifier = subwidth * subfactor
+        value = baseval - modifier
+    value += minimum
+    if not return_float:
+        value = int(round(value))
+    if value < minimum or value > maximum:
+        return mutate_normal(base, minimum, maximum)
+    return value
+
+
+def shuffle_normal(candidates):
+    max_index = len(candidates)-1
+    new_indexes = {}
+    random_degree = get_random_degree() ** 2
+    for i, c in enumerate(candidates):
+        new_index = mutate_normal(i, 0, max_index)
+        new_index = (i * (1-random_degree)) + (new_index * random_degree)
+        new_indexes[c] = new_index
+    shuffled = sorted(candidates,
+        key=lambda c: (new_indexes[c], random.random(), c.index))
+    return shuffled
 
 
 class TableSpecs:
@@ -318,16 +395,18 @@ class TableObject(object):
 
     @classproperty
     def ranked(cls):
-        return sorted(cls.every, key=lambda c: (c.rank, c.index))
+        return sorted(cls.every,
+                      key=lambda c: (c.rank, random.random(), c.index))
 
     def get_similar(self, candidates=None):
         if self.rank < 0:
             return self
         if candidates is None:
             candidates = [c for c in self.ranked if c.rank >= 0]
-        candidates = sorted(candidates, key=lambda c: c.rank)
+        candidates = sorted(candidates,
+                            key=lambda c: (c.rank, random.random(), c.index))
         index = candidates.index(self)
-        index = mutate_normal(index, maximum=len(candidates)-1)
+        index = mutate_normal(index, minimum=0, maximum=len(candidates)-1)
         return candidates[index]
 
     @classmethod
@@ -488,6 +567,7 @@ class TableObject(object):
         else:
             specsattrs = self.specsattrs
 
+        self.old_data = {}
         f = open(filename, 'r+b')
         f.seek(pointer)
         for name, size, other in specsattrs:
@@ -504,6 +584,7 @@ class TableObject(object):
                 value = []
                 for i in xrange(number):
                     value.append(read_multi(f, numbytes))
+            self.old_data[name] = value
             setattr(self, name, value)
         f.close()
 
@@ -644,6 +725,12 @@ class TableObject(object):
             o.cleanup()
         cls.cleaned = True
 
+    def reseed(self, salt=""):
+        s = "%s%s%s%s" % (
+            get_seed(), self.index, salt, self.__class__.__name__)
+        value = int(md5(s).hexdigest(), 0x10)
+        random.seed(value)
+
     @classmethod
     def full_randomize(cls):
         if hasattr(cls, "after_order"):
@@ -663,6 +750,7 @@ class TableObject(object):
         for o in cls.every:
             if hasattr(o, "mutated") and o.mutated:
                 continue
+            o.reseed(salt="mut")
             o.mutate()
             o.mutate_bits()
             o.mutated = True
@@ -672,6 +760,7 @@ class TableObject(object):
         for o in cls.every:
             if hasattr(o, "randomized") and o.randomized:
                 continue
+            o.reseed(salt="ran")
             o.randomize()
             o.randomized = True
 
@@ -680,6 +769,7 @@ class TableObject(object):
         for o in cls.every:
             if hasattr(o, "shuffled") and o.shuffled:
                 continue
+            o.reseed(salt="shu")
             o.shuffle()
             o.shuffled = True
 
@@ -687,6 +777,7 @@ class TableObject(object):
         if not hasattr(self, "mutate_attributes"):
             return
 
+        self.reseed(salt="mut")
         for attribute in sorted(self.mutate_attributes):
             if isinstance(self.mutate_attributes[attribute], type):
                 tob = self.mutate_attributes[attribute]
@@ -699,11 +790,13 @@ class TableObject(object):
                 if type(minmax) is tuple:
                     minimum, maximum = minmax
                 else:
-                    minimum, maximum = 0, 0xff
+                    values = [getattr(o, attribute) for o in self.every]
+                    minimum, maximum = min(values), max(values)
+                    self.mutate_attributes[attribute] = (minimum, maximum)
                 value = getattr(self, attribute)
                 if value < minimum or value > maximum:
                     continue
-                value = mutate_normal(value, minimum=minimum, maximum=maximum)
+                value = mutate_normal(value, minimum, maximum)
                 setattr(self, attribute, value)
 
     def mutate_bits(self):
@@ -711,22 +804,16 @@ class TableObject(object):
             return
 
         for attribute in sorted(self.mutate_bit_attributes):
-            try:
-                chance = self.mutate_bit_attributes[attribute]
-                if random.random() <= chance:
-                    value = self.get_bit(attribute)
-                    self.set_bit(attribute, not value)
-            except:
-                no_mutate, size, odds = self.mutate_bit_attributes[attribute]
-                value = getattr(self, attribute)
-                newvalue = self.mutate_bits(value, size, odds)
-                newvalue = newvalue ^ ((value ^ newvalue) & no_mutate)
-                setattr(self, attribute, newvalue)
+            chance = self.mutate_bit_attributes[attribute]
+            if random.random() <= chance:
+                value = self.get_bit(attribute)
+                self.set_bit(attribute, not value)
 
     def randomize(self):
         if not hasattr(self, "randomize_attributes"):
             return
 
+        self.reseed(salt="ran")
         for attribute in sorted(self.randomize_attributes):
             if isinstance(self.randomize_attributes[attribute], type):
                 tob = self.randomize_attributes[attribute]
@@ -740,6 +827,7 @@ class TableObject(object):
         if not hasattr(self, "shuffle_attributes"):
             return
 
+        self.reseed(salt="shu")
         for attributes in sorted(self.shuffle_attributes):
             if len(attributes) == 1:
                 attribute = attributes[0]
@@ -753,7 +841,7 @@ class TableObject(object):
                 setattr(self, attribute, value)
 
     @classmethod
-    def intershuffle(cls):
+    def intershuffle(cls, candidates=None):
         if not hasattr(cls, "intershuffle_attributes"):
             return
 
@@ -763,28 +851,17 @@ class TableObject(object):
             hard_shuffle = True
 
         for attributes in cls.intershuffle_attributes:
-            candidates = [o for o in cls.every
+            if candidates is None:
+                candidates = list(cls.every)
+            candidates = [o for o in candidates
                           if o.rank >= 0 and o.intershuffle_valid]
             if hard_shuffle:
                 shuffled = list(candidates)
                 random.shuffle(shuffled)
             else:
-                candidates = sorted(candidates, key=lambda c: c.rank)
-                shuffled = list(candidates)
-                max_index = len(candidates)-1
-                done = set([])
-                for i, o in enumerate(candidates):
-                    new_index = i
-                    if shuffled[i] in done:
-                        continue
-                    while random.choice([True, False]):
-                        new_index += min(1, (max_index / 10.0))
-                    new_index = int(round(new_index))
-                    new_index = min(new_index, max_index)
-                    a, b = shuffled[i], shuffled[new_index]
-                    done.add(a)
-                    shuffled[i] = b
-                    shuffled[new_index] = a
+                candidates = sorted(candidates,
+                    key=lambda c: (c.rank, random.random(), c.index))
+                shuffled = shuffle_normal(candidates)
 
             if isinstance(attributes, str) or isinstance(attributes, unicode):
                 attributes = [attributes]

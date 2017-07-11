@@ -6,7 +6,8 @@ from shutil import copyfile
 
 from randomtools.tablereader import (
     determine_global_table, sort_good_order, set_table_specs,
-    set_global_output_filename, select_patches, write_patches, verify_patches)
+    set_global_output_filename, select_patches, write_patches, verify_patches,
+    set_random_degree, set_seed, get_seed)
 from randomtools.utils import (
     utilrandom as random, rewrite_snes_title, rewrite_snes_checksum,
     md5hash)
@@ -15,7 +16,6 @@ sourcefile = None
 outfile = None
 flags = None
 user_input_flags = None
-seed = None
 difficulty = None
 activated_codes = None
 
@@ -23,11 +23,6 @@ activated_codes = None
 def get_outfile():
     global outfile
     return outfile
-
-
-def get_seed():
-    global seed
-    return seed
 
 
 def get_flags():
@@ -46,7 +41,8 @@ def get_activated_codes():
 
 
 def rewrite_snes_meta(title, version, lorom=False):
-    rewrite_snes_title("%s %s" % (title, seed), outfile, version, lorom=lorom)
+    rewrite_snes_title("%s %s" % (title, get_seed()),
+                       outfile, version, lorom=lorom)
     rewrite_snes_checksum(outfile, lorom=lorom)
 
 
@@ -68,9 +64,9 @@ def snescopy(sourcefile, outfile):
         raise Exception("Inappropriate file size for SNES rom file.")
 
 
-def run_interface(objects, custom_difficulty=False, snes=False, codes=None):
-    global sourcefile, outfile, flags, user_input_flags, seed
-    global difficulty, activated_codes
+def run_interface(objects, custom_degree=False, snes=False, codes=None):
+    global sourcefile, outfile, flags, user_input_flags
+    global activated_codes
 
     if codes is None:
         codes = {}
@@ -80,7 +76,9 @@ def run_interface(objects, custom_difficulty=False, snes=False, codes=None):
     num_args = len(args)
     while len(args) < 5:
         args.append(None)
-    _, sourcefile, flags, seed, difficulty = tuple(args)
+    _, sourcefile, flags, seed, random_degree = tuple(args)
+    if random_degree is None and num_args >= 2:
+        random_degree = 0.5
 
     if sourcefile is None:
         sourcefile = raw_input("Rom filename? ")
@@ -92,6 +90,7 @@ def run_interface(objects, custom_difficulty=False, snes=False, codes=None):
         seed = time()
     seed = int(seed)
     seed = seed % (10**10)
+    set_seed(seed)
     random.seed(seed)
 
     flagobjects = [o for o in objects if hasattr(o, "flag")
@@ -164,28 +163,31 @@ def run_interface(objects, custom_difficulty=False, snes=False, codes=None):
     determine_global_table(outfile)
     set_table_specs()
 
-    if not custom_difficulty:
-        difficulty = 1.0
-
-    if difficulty is None and num_args < 2:
-        difficulty = raw_input("Difficulty? (default: 1.0) ").strip()
-        print
-
-    if difficulty is None or difficulty == "":
-        difficulty = 1.0
-    difficulty = float(difficulty)
+    custom_degree = custom_degree or random_degree is not None
+    if custom_degree:
+        if random_degree is None:
+            random_degree = raw_input("Randomness? (default: 0.5) ").strip()
+            if not random_degree:
+                random_degree = 0.5
+        random_degree = float(random_degree)
+        assert isinstance(random_degree, float)
+        random_degree = min(1.0, max(0.0, random_degree))
+        set_random_degree(random_degree ** 2)
 
     if num_args < 3:
         select_patches()
 
     if flags == allflags:
         flags = string.lowercase
-        print ("Randomizing %s with all flags using seed %s "
-               "and difficulty %s." % (sourcefile, seed, difficulty))
+        print ("Randomizing %s with all flags using seed %s"
+               % (sourcefile, seed)),
     else:
         flags = flags.lower()
-        print ("Randomizing %s with flags '%s' using seed %s "
-               "and difficulty %s." % (sourcefile, flags, seed, difficulty))
+        print ("Randomizing %s with flags '%s' using seed %s"
+               % (sourcefile, flags, seed)),
+    if custom_degree:
+        print "and randomness %s" % random_degree
+    print "now."
     print
 
     if user_input_flags is None:
@@ -213,7 +215,7 @@ def clean_and_write(objects):
     for o in objects:
         if hasattr(o, "flag_description"):
             print "Cleaning %s." % o.flag_description.lower()
-        random.seed(seed+1)
+        random.seed(get_seed()+1)
         o.full_cleanup()
 
     print "Saving game objects..."
