@@ -188,31 +188,39 @@ def get_random_degree():
     return RANDOM_DEGREE
 
 
-def gen_random_normal():
+def gen_random_normal(random_degree=None):
+    if random_degree is None:
+        random_degree = get_random_degree()
     value_a = (random.random() + random.random() + random.random()) / 3.0
     value_b = random.random()
     value_c = 0.5
-    if get_random_degree() > 0.5:
-        factor = (get_random_degree() * 2) - 1
+    if random_degree > 0.5:
+        factor = (random_degree * 2) - 1
         return (value_a * (1-factor)) + (value_b * factor)
     else:
-        factor = get_random_degree() * 2
+        factor = random_degree * 2
         return (value_c * (1-factor)) + (value_a * factor)
 
 
-def mutate_normal(base, minimum, maximum, return_float=False):
+def mutate_normal(base, minimum, maximum, random_degree=None,
+                  return_float=False, wide=False):
     assert minimum <= base <= maximum
     if minimum == maximum:
         return base
+    if random_degree is None:
+        random_degree = get_random_degree()
     baseval = base-minimum
     width = maximum-minimum
-    factor = gen_random_normal()
+    factor = gen_random_normal(random_degree=random_degree)
     maxwidth = max(baseval, width-baseval)
     minwidth = min(baseval, width-baseval)
-    width_factor = 1.0
-    for _ in xrange(7):
-        width_factor *= random.uniform(get_random_degree(), width_factor)
-    subwidth = (minwidth * (1-width_factor)) + (maxwidth * width_factor)
+    if wide:
+        subwidth = maxwidth
+    else:
+        width_factor = 1.0
+        for _ in xrange(7):
+            width_factor *= random.uniform(random_degree, width_factor)
+        subwidth = (minwidth * (1-width_factor)) + (maxwidth * width_factor)
     if factor > 0.5:
         subfactor = (factor-0.5) * 2
         modifier = subwidth * subfactor
@@ -229,13 +237,16 @@ def mutate_normal(base, minimum, maximum, return_float=False):
     return value
 
 
-def shuffle_normal(candidates):
+def shuffle_normal(candidates, random_degree=None):
+    if random_degree is None:
+        random_degree = get_random_degree()
     max_index = len(candidates)-1
     new_indexes = {}
-    random_degree = get_random_degree() ** 2
+    new_random_degree = random_degree ** 2
     for i, c in enumerate(candidates):
-        new_index = mutate_normal(i, 0, max_index)
-        new_index = (i * (1-random_degree)) + (new_index * random_degree)
+        new_index = mutate_normal(i, 0, max_index, random_degree=random_degree)
+        new_index = (i * (1-new_random_degree)) + (
+            new_index * new_random_degree)
         new_indexes[c] = new_index
     shuffled = sorted(candidates,
         key=lambda c: (new_indexes[c], random.random(), c.index))
