@@ -409,16 +409,58 @@ class TableObject(object):
         return sorted(cls.every,
                       key=lambda c: (c.rank, random.random(), c.index))
 
-    def get_similar(self, candidates=None):
+    def get_similar(self, candidates=None, override_outsider=False):
         if self.rank < 0:
             return self
         if candidates is None:
             candidates = [c for c in self.ranked if c.rank >= 0]
+        candidates = sorted(set(candidates))
+
+        if len(candidates) <= 0:
+            raise Exception("No candidates for get_similar")
+
+        if override_outsider and self not in candidates:
+            candidates.append(self)
+        elif self not in candidates:
+            raise Exception("Must manually override outsider elements.")
+        else:
+            override_outsider = False
+
+        if len(candidates) <= 1:
+            return candidates[0]
+
         candidates = sorted(candidates,
                             key=lambda c: (c.rank, random.random(), c.index))
         index = candidates.index(self)
+        if override_outsider:
+            candidates.remove(self)
+            index = random.choice([index, index-1])
+            index = max(0, min(index, len(candidates)-1))
         index = mutate_normal(index, minimum=0, maximum=len(candidates)-1)
-        return candidates[index]
+        chosen = candidates[index]
+        if override_outsider:
+            assert chosen is not self
+
+        return chosen
+
+    @classmethod
+    def get_similar_set(cls, current, candidates=None):
+        if candidates is None:
+            candidates = [c for c in cls.ranked if c.rank >= 0]
+        candidates = sorted(set(candidates),
+                            key=lambda c: (c.rank, random.random(), c.index))
+        random.shuffle(sorted(current, key=lambda c: c.index))
+        chosens = []
+        for c in current:
+            while True:
+                chosen = c.get_similar(candidates, override_outsider=True)
+                assert chosen not in chosens
+                chosens.append(chosen)
+                candidates.remove(chosen)
+                assert chosen not in candidates
+                break
+        assert len(chosens) == len(current)
+        return chosens
 
     @classmethod
     def get(cls, index):
