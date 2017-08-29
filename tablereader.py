@@ -785,14 +785,22 @@ class TableObject(object):
         random.seed(value)
 
     @classmethod
+    def class_reseed(cls, salt=""):
+        obj = cls.every[0]
+        obj.reseed(salt="cls"+salt)
+
+    @classmethod
     def full_randomize(cls):
         if hasattr(cls, "after_order"):
             for cls2 in cls.after_order:
                 if not (hasattr(cls2, "randomized") and cls2.randomized):
                     raise Exception("Randomize order violated: %s %s"
                                     % (cls, cls2))
+        cls.class_reseed("group")
         cls.groupshuffle()
+        cls.class_reseed("inter")
         cls.intershuffle()
+        cls.class_reseed("full")
         cls.shuffle_all()
         cls.randomize_all()
         cls.mutate_all()
@@ -898,6 +906,7 @@ class TableObject(object):
         if not hasattr(cls, "intershuffle_attributes"):
             return
 
+        cls.class_reseed("inter")
         hard_shuffle = False
         if (len(set([o.rank for o in cls.every])) == 1
                 or all([o.rank == o.index for o in cls.every])):
@@ -933,6 +942,7 @@ class TableObject(object):
                 or not cls.groupshuffle_enabled):
             return
 
+        cls.class_reseed("group")
         shuffled = range(cls.numgroups)
         random.shuffle(shuffled)
         swapdict = {}
