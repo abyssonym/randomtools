@@ -249,8 +249,12 @@ def shuffle_normal(candidates, random_degree=None):
         new_index = (i * (1-new_random_degree)) + (
             new_index * new_random_degree)
         new_indexes[c] = new_index
-    shuffled = sorted(candidates,
-        key=lambda c: (new_indexes[c], random.random(), c.index))
+    if candidates and hasattr(candidates[0], "index"):
+        shuffled = sorted(candidates,
+            key=lambda c: (new_indexes[c], random.random(), c.index))
+    else:
+        shuffled = sorted(candidates,
+            key=lambda c: (new_indexes[c], random.random(), c))
     return shuffled
 
 
