@@ -4,6 +4,7 @@ from functools import total_ordering
 from os import path
 from hashlib import md5
 import string
+from copy import copy
 
 
 try:
@@ -637,7 +638,7 @@ class TableObject(object):
                 value = []
                 for i in xrange(number):
                     value.append(read_multi(f, numbytes))
-            self.old_data[name] = value
+            self.old_data[name] = copy(value)
             setattr(self, name, value)
         f.close()
 
