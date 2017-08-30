@@ -238,14 +238,15 @@ def mutate_normal(base, minimum, maximum, random_degree=None,
     return value
 
 
-def shuffle_normal(candidates, random_degree=None):
+def shuffle_normal(candidates, random_degree=None, wide=False):
     if random_degree is None:
         random_degree = get_random_degree()
     max_index = len(candidates)-1
     new_indexes = {}
     new_random_degree = random_degree ** 2
     for i, c in enumerate(candidates):
-        new_index = mutate_normal(i, 0, max_index, random_degree=random_degree)
+        new_index = mutate_normal(i, 0, max_index,
+                                  random_degree=random_degree, wide=wide)
         new_index = (i * (1-new_random_degree)) + (
             new_index * new_random_degree)
         new_indexes[c] = new_index
