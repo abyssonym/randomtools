@@ -538,6 +538,27 @@ class TableObject(object):
         return "".join([c for c in self.name if c in string.printable])
 
     @property
+    def verification_signature(self):
+        return self.get_verification_signature(old_data=False)
+
+    @property
+    def old_verification_signature(self):
+        return self.get_verification_signature(old_data=True)
+
+    def get_verification_signature(self, old_data=False):
+        labels = sorted([a for (a, b, c) in self.specsattrs
+                         if c not in ["str"]])
+        if old_data:
+            data = str([(label, self.old_data[label]) for label in labels])
+        else:
+            data = str([(label, getattr(self, label)) for label in labels])
+
+        datahash = md5(data).hexdigest()
+        signature = "{0}:{1:0>4}:{2}".format(
+            self.__class__.__name__, ("%x" % self.index), datahash)
+        return signature
+
+    @property
     def description(self):
         classname = self.__class__.__name__
         pointer = "%x" % self.pointer if self.pointer else "None"
