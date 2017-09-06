@@ -7,7 +7,7 @@ from shutil import copyfile
 from randomtools.tablereader import (
     determine_global_table, sort_good_order, set_table_specs,
     set_global_output_filename, select_patches, write_patches, verify_patches,
-    set_random_degree, set_seed, get_seed)
+    get_random_degree, set_random_degree, set_seed, get_seed)
 from randomtools.utils import (
     utilrandom as random, rewrite_snes_title, rewrite_snes_checksum,
     md5hash)
@@ -41,7 +41,12 @@ def get_activated_codes():
 
 
 def rewrite_snes_meta(title, version, lorom=False):
-    rewrite_snes_title("%s %s" % (title, get_seed()),
+    random_degree = int(round((get_random_degree()**0.5) * 100))
+    if random_degree >= 100:
+        random_degree = "!!"
+    else:
+        random_degree = "{0:0>2}".format(random_degree)
+    rewrite_snes_title("%s %s %s" % (title, random_degree, get_seed()),
                        outfile, version, lorom=lorom)
     rewrite_snes_checksum(outfile, lorom=lorom)
 
