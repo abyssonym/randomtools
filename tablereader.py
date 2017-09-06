@@ -243,12 +243,10 @@ def shuffle_normal(candidates, random_degree=None, wide=False):
         random_degree = get_random_degree()
     max_index = len(candidates)-1
     new_indexes = {}
-    new_random_degree = random_degree ** 2
     for i, c in enumerate(candidates):
         new_index = mutate_normal(i, 0, max_index,
                                   random_degree=random_degree, wide=wide)
-        new_index = (i * (1-new_random_degree)) + (
-            new_index * new_random_degree)
+        new_index = (i * (1-random_degree)) + (new_index * random_degree)
         new_indexes[c] = new_index
     if candidates and hasattr(candidates[0], "index"):
         shuffled = sorted(candidates,
@@ -908,9 +906,12 @@ class TableObject(object):
                 setattr(self, attribute, value)
 
     @classmethod
-    def intershuffle(cls, candidates=None):
+    def intershuffle(cls, candidates=None, random_degree=None):
         if not hasattr(cls, "intershuffle_attributes"):
             return
+
+        if random_degree is None:
+            random_degree = get_random_degree()
 
         cls.class_reseed("inter")
         hard_shuffle = False
@@ -929,7 +930,8 @@ class TableObject(object):
             else:
                 candidates = sorted(candidates,
                     key=lambda c: (c.rank, random.random(), c.index))
-                shuffled = shuffle_normal(candidates)
+                shuffled = shuffle_normal(candidates,
+                                          random_degree=random_degree)
 
             if isinstance(attributes, str) or isinstance(attributes, unicode):
                 attributes = [attributes]
