@@ -3,6 +3,7 @@ from os import stat
 import string
 from time import time
 from shutil import copyfile
+from collections import defaultdict
 
 from randomtools.tablereader import (
     determine_global_table, sort_good_order, set_table_specs,
@@ -18,6 +19,12 @@ flags = None
 user_input_flags = None
 difficulty = None
 activated_codes = None
+all_objects = None
+
+
+def get_all_objects():
+    global all_objects
+    return all_objects
 
 
 def get_outfile():
@@ -41,11 +48,16 @@ def get_activated_codes():
 
 
 def rewrite_snes_meta(title, version, lorom=False):
-    random_degree = int(round((get_random_degree()**0.5) * 100))
-    if random_degree >= 100:
-        random_degree = "!!"
+    for o in get_all_objects():
+        if o.random_degree != get_random_degree():
+            random_degree = "??"
+            break
     else:
-        random_degree = "{0:0>2}".format(random_degree)
+        random_degree = int(round((get_random_degree()**0.5) * 100))
+        if random_degree >= 100:
+            random_degree = "!!"
+        else:
+            random_degree = "{0:0>2}".format(random_degree)
     rewrite_snes_title("%s %s %s" % (title, random_degree, get_seed()),
                        outfile, version, lorom=lorom)
     rewrite_snes_checksum(outfile, lorom=lorom)
@@ -71,7 +83,9 @@ def snescopy(sourcefile, outfile):
 
 def run_interface(objects, custom_degree=False, snes=False, codes=None):
     global sourcefile, outfile, flags, user_input_flags
-    global activated_codes
+    global activated_codes, all_objects
+
+    all_objects = objects
 
     if codes is None:
         codes = {}
@@ -170,10 +184,48 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
 
     custom_degree = custom_degree or random_degree is not None
     if custom_degree:
+        custom_split = False
+        for o in sorted(objects):
+            if hasattr(o, "custom_random_enable") and o.custom_random_enable:
+                custom_split = True
+                break
+
         if random_degree is None:
+            if custom_split:
+                print ("\nIf you would like even more control over the "
+                       "randomness, type \"custom\" here.")
             random_degree = raw_input("Randomness? (default: 0.5) ").strip()
             if not random_degree:
                 random_degree = 0.5
+
+        if custom_split and (isinstance(random_degree, basestring) and
+                "custom" in random_degree.strip().lower()):
+            custom_dict = defaultdict(set)
+            for o in sorted(objects):
+                if (hasattr(o, "custom_random_enable")
+                        and o.custom_random_enable):
+                    if o.custom_random_enable is True:
+                        custom_dict[o.flag].add(o)
+                    else:
+                        custom_dict[o.custom_random_enable].add(o)
+
+            for k in sorted(custom_dict):
+                os = sorted(custom_dict[k], key=lambda o: o.__name__)
+                onames = ", ".join([o.__name__ for o in os])
+                s = raw_input("Randomness for %s? " % onames).strip()
+                if not s:
+                    continue
+                for o in os:
+                    crd = float(s)
+                    assert isinstance(crd, float)
+                    crd = min(1.0, max(0.0, crd))
+                    o.custom_random_degree = crd ** 2
+
+            random_degree = raw_input("Randomness for everything"
+                                      " unspecified? ").strip()
+            if not random_degree:
+                random_degree = 0.5
+
         random_degree = float(random_degree)
         assert isinstance(random_degree, float)
         random_degree = min(1.0, max(0.0, random_degree))
@@ -182,6 +234,7 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
     if num_args < 3:
         select_patches()
 
+    print
     if flags == allflags:
         flags = string.lowercase
         print ("Randomizing %s with all flags using seed %s"

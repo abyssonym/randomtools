@@ -79,7 +79,6 @@ def determine_global_table(outfile):
             raw_input("Using this rom information. Okay? ")
             label = sorted(labelfiles.keys())[0]
             filename = labelfiles[label]
-    print label
     GLOBAL_LABEL = label
     set_global_table_filename(filename)
 
@@ -234,13 +233,19 @@ def mutate_normal(base, minimum, maximum, random_degree=None,
     if not return_float:
         value = int(round(value))
     if value < minimum or value > maximum:
-        return mutate_normal(base, minimum, maximum)
+        return mutate_normal(base, minimum, maximum,
+                             random_degree=random_degree,
+                             return_float=return_float, wide=wide)
     return value
 
 
 def shuffle_normal(candidates, random_degree=None, wide=False):
     if random_degree is None:
-        random_degree = get_random_degree()
+        classes = list(set([c.__class__ for c in candidates]))
+        if len(classes) == 1 and hasattr(classes[0], "random_degree"):
+            random_degree = classes[0].random_degree
+        else:
+            random_degree = get_random_degree()
     max_index = len(candidates)-1
     new_indexes = {}
     for i, c in enumerate(candidates):
@@ -331,6 +336,13 @@ class TableObject(object):
             return False
         assert type(self) is type(other)
         return (self.rank, self.index) < (other.rank, other.index)
+
+    @classproperty
+    def random_degree(cls):
+        if hasattr(cls, "custom_random_degree"):
+            return cls.custom_random_degree
+        else:
+            return get_random_degree()
 
     @classproperty
     def numgroups(cls):
@@ -440,7 +452,8 @@ class TableObject(object):
             candidates.remove(self)
             index = random.choice([index, index-1])
             index = max(0, min(index, len(candidates)-1))
-        index = mutate_normal(index, minimum=0, maximum=len(candidates)-1)
+        index = mutate_normal(index, minimum=0, maximum=len(candidates)-1,
+                              random_degree=self.random_degree)
         chosen = candidates[index]
         if override_outsider:
             assert chosen is not self
@@ -882,7 +895,8 @@ class TableObject(object):
                 value = getattr(self, attribute)
                 if value < minimum or value > maximum:
                     continue
-                value = mutate_normal(value, minimum, maximum)
+                value = mutate_normal(value, minimum, maximum,
+                                      random_degree=self.random_degree)
                 setattr(self, attribute, value)
 
     def mutate_bits(self):
@@ -932,7 +946,7 @@ class TableObject(object):
             return
 
         if random_degree is None:
-            random_degree = get_random_degree()
+            random_degree = cls.random_degree
 
         cls.class_reseed("inter")
         hard_shuffle = False
