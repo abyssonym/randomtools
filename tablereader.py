@@ -425,12 +425,15 @@ class TableObject(object):
         return sorted(cls.every,
                       key=lambda c: (c.rank, random.random(), c.index))
 
-    def get_similar(self, candidates=None, override_outsider=False):
+    def get_similar(self, candidates=None, override_outsider=False,
+                    random_degree=None):
         if self.rank < 0:
             return self
         if candidates is None:
             candidates = [c for c in self.ranked if c.rank >= 0]
         candidates = sorted(set(candidates))
+        if random_degree is None:
+            random_degree = self.random_degree
 
         if len(candidates) <= 0:
             raise Exception("No candidates for get_similar")
@@ -453,7 +456,7 @@ class TableObject(object):
             index = random.choice([index, index-1])
             index = max(0, min(index, len(candidates)-1))
         index = mutate_normal(index, minimum=0, maximum=len(candidates)-1,
-                              random_degree=self.random_degree)
+                              random_degree=random_degree)
         chosen = candidates[index]
         if override_outsider:
             assert chosen is not self
