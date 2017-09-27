@@ -23,6 +23,7 @@ GLOBAL_LABEL = None
 GRAND_OBJECT_DICT = {}
 PATCH_FILENAMES = []
 OPTION_FILENAMES = []
+NOVERIFY_PATCHES = []
 RANDOM_DEGREE = 0.25
 SEED = None
 
@@ -149,6 +150,8 @@ def verify_patches(outfile):
     print "Verifying patches..."
     f = open(outfile, 'r+b')
     for patchfilename in PATCH_FILENAMES:
+        if patchfilename in NOVERIFY_PATCHES:
+            continue
         patch = patch_filename_to_bytecode(patchfilename)
         for address, code in sorted(patch.items()):
             f.seek(address)
@@ -1149,12 +1152,14 @@ def set_table_specs(filename=None):
             setattr(addresses, attr, value)
             continue
 
-        if line.startswith(".patch") or line.startswith(".option"):
+        if any(line.startswith(s) for s in [".patch", ".option"]):
             _, patchfilename = line.strip().split(' ', 1)
             patchfilename = patchfilename.strip()
             PATCH_FILENAMES.append(patchfilename)
             if line.startswith(".option"):
                 OPTION_FILENAMES.append(patchfilename)
+            if ".no_verify" in line:
+                NOVERIFY_PATCHES.append(patchfilename)
             continue
 
         while "  " in line:
