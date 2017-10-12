@@ -263,6 +263,7 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
         if not hasattr(o, "flag") or o.flag in flags:
             random.seed(seed)
             o.full_randomize()
+        o.randomize_step_finished = True
 
     if set(flags) >= set(allflags):
         flags = allflags

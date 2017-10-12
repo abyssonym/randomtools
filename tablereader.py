@@ -854,7 +854,8 @@ class TableObject(object):
     def full_randomize(cls):
         if hasattr(cls, "after_order"):
             for cls2 in cls.after_order:
-                if not (hasattr(cls2, "randomized") and cls2.randomized):
+                if not (hasattr(cls2, "randomize_step_finished")
+                        and cls2.randomize_step_finished):
                     raise Exception("Randomize order violated: %s %s"
                                     % (cls, cls2))
         cls.class_reseed("group")
