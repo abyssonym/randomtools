@@ -400,6 +400,12 @@ class TableObject(object):
         return cls.specs.pointerfilename
 
     @classproperty
+    def specssyncpointers(cls):
+        if hasattr(cls.specs, "syncpointers"):
+            return cls.specs.syncpointers
+        return None
+
+    @classproperty
     def bitnames(cls):
         return cls.specs.bitnames
 
@@ -690,12 +696,20 @@ class TableObject(object):
             value = getattr(another, name)
             setattr(self, name, value)
 
-    def write_data(self, filename=None, pointer=None):
+    def write_data(self, filename=None, pointer=None, syncing=False):
         if pointer is None:
             pointer = self.pointer
         if filename is None:
             filename = self.filename
         if pointer is None or filename is None:
+            return
+
+        if not syncing and self.specssyncpointers:
+            for p in self.specssyncpointers:
+                offset = p - self.specspointer
+                new_pointer = self.pointer + offset
+                self.write_data(filename=filename, pointer=new_pointer,
+                                syncing=True)
             return
 
         if self.variable_size is not None:
@@ -1205,7 +1219,13 @@ def set_table_specs(filename=None):
             else:
                 objname, tablefilename, pointer, count = tuple(line)
         if pointer is not None and isinstance(pointer, basestring):
-            pointer = int(pointer, 0x10)
+            if ',' in pointer:
+                pointers = map(lambda p: int(p, 0x10), pointer.split(','))
+                pointer = pointers[0]
+                syncpointers = True
+            else:
+                pointer = int(pointer, 0x10)
+                syncpointers = False
         if count is not None:
             count = int(count)
         TABLE_SPECS[objname] = TableSpecs(path.join(tblpath, tablefilename),
@@ -1219,3 +1239,5 @@ def set_table_specs(filename=None):
             TABLE_SPECS[objname].groupednum = groupednum
         if delimit or pointdelimit:
             TABLE_SPECS[objname].delimitval = delimitval
+        if syncpointers:
+            TABLE_SPECS[objname].syncpointers = pointers
