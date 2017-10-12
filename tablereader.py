@@ -293,6 +293,8 @@ class TableSpecs:
                 size, bitnames = tuple(size.split(':'))
                 size = 1
                 bitnames = bitnames.split(" ")
+                assert all([bn.strip() for bn in bitnames])
+                assert len(bitnames) == len(set(bitnames)) == 8
                 self.bitnames[name] = bitnames
             elif size == '?':
                 size = 0
@@ -545,6 +547,7 @@ class TableObject(object):
         for key, value in self.bitnames.items():
             if bitname in value:
                 index = value.index(bitname)
+                assert index <= 7
                 byte = getattr(self, key)
                 if bitvalue:
                     byte = byte | (1 << index)
