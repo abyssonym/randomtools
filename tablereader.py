@@ -1187,6 +1187,7 @@ def set_table_specs(filename=None):
         pointerfilename = None
         pointer = None
         count = None
+        syncpointers = False
         if len(line) >= 5:
             (objname, tablefilename, pointer, count,
                 organization) = tuple(line[:5])
