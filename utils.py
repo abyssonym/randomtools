@@ -3,6 +3,20 @@ from collections import defaultdict
 from hashlib import md5
 
 
+def cached_property(fn):
+    @property
+    def cacher(self):
+        if not hasattr(self, '_property_cache'):
+            self._property_cache = {}
+
+        if fn.__name__ not in self._property_cache:
+            self._property_cache[fn.__name__] = fn(self)
+
+        return self._property_cache[fn.__name__]
+
+    return cacher
+
+
 def md5hash(filename):
     f = open(filename, 'r+b')
     data = f.read()
