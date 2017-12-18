@@ -939,13 +939,9 @@ class TableObject(object):
 
         self.reseed(salt="ran")
         for attribute in sorted(self.randomize_attributes):
-            if isinstance(self.randomize_attributes[attribute], type):
-                tob = self.randomize_attributes[attribute]
-                candidates = [t for t in tob.every if t.rank >= 0]
-                setattr(self, attribute, random.choice(candidates).index)
-            else:
-                minimum, maximum = self.randomize_attributes[attribute]
-                setattr(self, attribute, random.randint(minimum, maximum))
+            candidates = [c for c in self.every if c.rank >= 0]
+            chosen = random.choice(candidates)
+            setattr(self, attribute, chosen.old_data[attribute])
 
     def shuffle(self):
         if not hasattr(self, "shuffle_attributes"):
