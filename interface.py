@@ -272,7 +272,7 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
 def clean_and_write(objects):
     objects = sort_good_order(objects)
     for o in objects:
-        if hasattr(o, "flag_description"):
+        if hasattr(o, "flag_description") and o.flag in get_flags():
             print "Cleaning %s." % o.flag_description.lower()
         random.seed(get_seed()+1)
         o.full_cleanup()
