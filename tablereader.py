@@ -252,9 +252,9 @@ def shuffle_normal(candidates, random_degree=None, wide=False):
     max_index = len(candidates)-1
     new_indexes = {}
     for i, c in enumerate(candidates):
-        new_index = mutate_normal(i, 0, max_index,
+        new_index = mutate_normal(i, 0, max_index, return_float=True,
                                   random_degree=random_degree, wide=wide)
-        new_index = (i * (1-random_degree)) + (new_index * random_degree)
+        #new_index = (i * (1-random_degree)) + (new_index * random_degree)
         new_indexes[c] = new_index
     if candidates and hasattr(candidates[0], "index"):
         shuffled = sorted(candidates,
