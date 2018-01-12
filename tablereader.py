@@ -26,6 +26,15 @@ OPTION_FILENAMES = []
 NOVERIFY_PATCHES = []
 RANDOM_DEGREE = 0.25
 SEED = None
+OPEN_FILES = {}
+
+
+def get_open_file(filename):
+    if filename in OPEN_FILES:
+        return OPEN_FILES[filename]
+    f = open(filename, "r+b")
+    OPEN_FILES[filename] = f
+    return get_open_file(filename)
 
 
 def get_global_label():
@@ -134,13 +143,12 @@ def write_patches(outfile):
         return
 
     print "Writing patches..."
-    f = open(outfile, 'r+b')
+    f = get_open_file(outfile)
     for patchfilename in PATCH_FILENAMES:
         patch = patch_filename_to_bytecode(patchfilename)
         for address, code in sorted(patch.items()):
             f.seek(address)
             f.write(code)
-    f.close()
 
 
 def verify_patches(outfile):
@@ -148,7 +156,7 @@ def verify_patches(outfile):
         return
 
     print "Verifying patches..."
-    f = open(outfile, 'r+b')
+    f = get_open_file(outfile)
     for patchfilename in PATCH_FILENAMES:
         if patchfilename in NOVERIFY_PATCHES:
             continue
@@ -159,7 +167,6 @@ def verify_patches(outfile):
             if code != written:
                 raise Exception(
                     "Patch %x conflicts with modified data." % address)
-    f.close()
 
 
 def sort_good_order(objects):
@@ -674,7 +681,7 @@ class TableObject(object):
             specsattrs = self.specsattrs
 
         self.old_data = {}
-        f = open(filename, 'r+b')
+        f = get_open_file(filename)
         f.seek(pointer)
         for name, size, other in specsattrs:
             if other in [None, "int"]:
@@ -692,7 +699,6 @@ class TableObject(object):
                     value.append(read_multi(f, numbytes))
             self.old_data[name] = copy(value)
             setattr(self, name, value)
-        f.close()
 
     def copy_data(self, another):
         for name, _, _ in self.specsattrs:
@@ -722,7 +728,7 @@ class TableObject(object):
         else:
             specsattrs = self.specsattrs
 
-        f = open(filename, 'r+b')
+        f = get_open_file(filename)
         for name, size, other in specsattrs:
             value = getattr(self, name)
             if other in [None, "int"]:
@@ -745,7 +751,6 @@ class TableObject(object):
                     f.seek(pointer)
                     write_multi(f, v, length=numbytes)
                     pointer += numbytes
-        f.close()
         return pointer
 
     @classmethod
@@ -756,7 +761,7 @@ class TableObject(object):
                 o.write_data(filename)
         elif cls.specsgrouped:
             pointer = cls.specspointer
-            f = open(filename, "r+b")
+            f = get_open_file(filename)
             for i in range(cls.numgroups):
                 objs = [o for o in cls.every if o.groupindex == i]
                 f.seek(pointer)
@@ -765,10 +770,9 @@ class TableObject(object):
                     pointer += 1
                 for o in objs:
                     pointer = o.write_data(filename, pointer)
-            f.close()
         elif cls.specspointed and cls.specsdelimit:
             pointer = cls.specspointedpointer
-            f = open(filename, "r+b")
+            f = get_open_file(filename)
             for i in range(cls.specscount):
                 objs = [o for o in cls.every if o.groupindex == i]
                 if not objs:
@@ -792,11 +796,10 @@ class TableObject(object):
                 f.seek(cls.specspointer + (cls.specspointedsize * i))
                 write_multi(f, nullpointer-cls.specspointedpointer,
                             length=cls.specspointedsize)
-            f.close()
         elif cls.specspointed:
             pointer = cls.specspointer
             size = cls.specspointedsize
-            f = open(filename, "r+b")
+            f = get_open_file(filename)
             first_pointer = min([o.pointer for o in cls.every if o is not None])
             pointedpointer = max(first_pointer, pointer + (cls.specscount * size))
             mask = (2 ** (8*size)) - 1
@@ -810,9 +813,8 @@ class TableObject(object):
                     pointedpointer = o.write_data(filename, pointedpointer)
                 f.seek(pointer + (i*size))
                 write_multi(f, masked, length=size)
-            f.close()
         elif cls.specsdelimit:
-            f = open(filename, "r+b")
+            f = get_open_file(filename)
             pointer = cls.specspointer
             for i in range(cls.specscount):
                 objs = cls.getgroup(i)
@@ -823,7 +825,6 @@ class TableObject(object):
                 f.seek(pointer)
                 f.write(chr(cls.specsdelimitval))
                 pointer += 1
-            f.close()
 
     def cleanup(self):
         return
@@ -1072,10 +1073,9 @@ def get_table_objects(objtype, filename=None):
         counter = 0
         while len(objects) < number:
             if objtype.specs.groupednum is None:
-                f = open(filename, 'r+b')
+                f = get_open_file(filename)
                 f.seek(pointer)
                 value = ord(f.read(1))
-                f.close()
                 pointer += 1
             else:
                 value = objtype.specs.groupednum
@@ -1084,14 +1084,13 @@ def get_table_objects(objtype, filename=None):
     elif pointed and delimit:
         size = objtype.specspointedsize
         counter = 0
-        f = open(filename, 'r+b')
-        g = open(filename, 'r+b')
+        f = get_open_file(filename)
         while counter < number:
             f.seek(pointer)
             subpointer = read_multi(f, size) + objtype.specspointedpointer
             while True:
-                g.seek(subpointer)
-                peek = ord(g.read(1))
+                f.seek(subpointer)
+                peek = ord(f.read(1))
                 if peek == objtype.specsdelimitval:
                     break
                 obj = objtype(filename, subpointer, index=len(objects),
@@ -1100,12 +1099,10 @@ def get_table_objects(objtype, filename=None):
                 subpointer += objtype.total_size
             pointer += size
             counter += 1
-        g.close()
-        f.close()
     elif pointed and objtype.total_size > 0:
         size = objtype.specspointedsize
         counter = 0
-        f = open(filename, 'r+b')
+        f = get_open_file(filename)
         while counter < number:
             f.seek(pointer)
             subpointer = read_multi(f, size) + objtype.specspointedpointer
@@ -1117,11 +1114,10 @@ def get_table_objects(objtype, filename=None):
             add_objects(groupcount, groupindex=counter, p=subpointer)
             pointer += size
             counter += 1
-        f.close()
     elif pointed and objtype.total_size == 0:
         size = objtype.specspointedsize
         counter = 0
-        f = open(filename, 'r+b')
+        f = get_open_file(filename)
         while counter < number:
             f.seek(pointer + (size*counter))
             subpointer = read_multi(f, size) + objtype.specspointedpointer
@@ -1129,9 +1125,8 @@ def get_table_objects(objtype, filename=None):
             subpointer2 = read_multi(f, size) + objtype.specspointedpointer
             add_variable_object(subpointer, subpointer2)
             counter += 1
-        f.close()
     elif delimit:
-        f = open(filename, 'r+b')
+        f = get_open_file(filename)
         for counter in xrange(number):
             while True:
                 f.seek(pointer)
@@ -1143,7 +1138,6 @@ def get_table_objects(objtype, filename=None):
                               groupindex=counter, size=None)
                 objects.append(obj)
                 pointer += obj.total_size
-        f.close()
 
     already_gotten[identifier] = objects
 
