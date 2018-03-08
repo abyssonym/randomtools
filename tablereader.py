@@ -349,6 +349,23 @@ class TableObject(object):
         assert type(self) is type(other)
         return (self.rank, self.index) < (other.rank, other.index)
 
+    @classmethod
+    def create_new(cls):
+        index = max([o.index for o in cls.every]) + 1
+        new = cls(index=index)
+        #new.old_data = {}
+        for name, size, other in new.specsattrs:
+            if other in [None, "int"]:
+                setattr(new, name, 0)
+            elif other == "str":
+                setattr(new, name, "")
+            elif other == "list":
+                setattr(new, name, [])
+            #new.old_data[name] = copy(getattr(new, name))
+
+        cls._every.append(new)
+        return new
+
     @classproperty
     def random_degree(cls):
         if hasattr(cls, "custom_random_degree"):
@@ -424,7 +441,11 @@ class TableObject(object):
 
     @classproperty
     def every(cls):
-        return get_table_objects(cls)
+        if hasattr(cls, "_every"):
+            return cls._every
+
+        cls._every = list(get_table_objects(cls))
+        return cls.every
 
     @property
     def rank(self):
