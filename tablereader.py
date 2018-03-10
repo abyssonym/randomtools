@@ -31,10 +31,17 @@ OPEN_FILES = {}
 
 def get_open_file(filename):
     if filename in OPEN_FILES:
-        return OPEN_FILES[filename]
+        f = OPEN_FILES[filename]
+        if not f.closed:
+            return OPEN_FILES[filename]
     f = open(filename, "r+b")
     OPEN_FILES[filename] = f
     return get_open_file(filename)
+
+
+def close_file(filename):
+    if filename in OPEN_FILES:
+        OPEN_FILES[filename].close()
 
 
 def get_global_label():

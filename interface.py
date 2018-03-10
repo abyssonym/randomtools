@@ -8,7 +8,7 @@ from collections import defaultdict
 from randomtools.tablereader import (
     determine_global_table, sort_good_order, set_table_specs,
     set_global_output_filename, select_patches, write_patches, verify_patches,
-    get_random_degree, set_random_degree, set_seed, get_seed)
+    get_random_degree, set_random_degree, set_seed, get_seed, close_file)
 from randomtools.utils import (
     utilrandom as random, rewrite_snes_title, rewrite_snes_checksum,
     md5hash)
@@ -48,6 +48,8 @@ def get_activated_codes():
 
 
 def rewrite_snes_meta(title, version, lorom=False):
+    close_file(outfile)
+
     for o in get_all_objects():
         if o.random_degree != get_random_degree():
             random_degree = "??"
