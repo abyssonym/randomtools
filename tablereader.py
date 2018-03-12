@@ -145,17 +145,24 @@ def select_patches():
         PATCH_FILENAMES.remove(pfn)
 
 
+def write_patch(outfile, patchfilename):
+    f = get_open_file(outfile)
+    patch = patch_filename_to_bytecode(patchfilename)
+    for address, code in sorted(patch.items()):
+        f.seek(address)
+        f.write(code)
+
+    if patchfilename not in PATCH_FILENAMES:
+        PATCH_FILENAMES.append(patchfilename)
+
+
 def write_patches(outfile):
     if not PATCH_FILENAMES:
         return
 
     print "Writing patches..."
-    f = get_open_file(outfile)
     for patchfilename in PATCH_FILENAMES:
-        patch = patch_filename_to_bytecode(patchfilename)
-        for address, code in sorted(patch.items()):
-            f.seek(address)
-            f.write(code)
+        write_patch(outfile, patchfilename)
 
 
 def verify_patches(outfile):
