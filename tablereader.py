@@ -102,21 +102,74 @@ def determine_global_table(outfile):
 
 def patch_filename_to_bytecode(patchfilename):
     patch = {}
+    definitions = {}
+    labels = {}
+    next_address = None
     f = open(path.join(tblpath, patchfilename))
     for line in f:
         line = line.strip()
-        if not line or line[0] == '#':
+        if '#' in line:
+            line = line.split('#')[0].strip()
+
+        if not line:
             continue
+
+        while "  " in line:
+            line = line.replace("  ", " ")
+
+        if line.startswith(".def"):
+            _, name, value = line.split(' ', 2)
+            definitions[name] = value
+            continue
+
+        if line.startswith(".label"):
+            try:
+                _, name, address = line.split(' ')
+            except ValueError:
+                _, name = line.split(' ')
+                address = None
+            labels[name] = address
+            continue
+
+        for name in definitions:
+            if name in line:
+                line = line.replace(name, definitions[name])
+
         address, code = line.split(':')
-        address = int(address.strip(), 0x10)
+        if not address.strip():
+            address = next_address
+        else:
+            address = int(address.strip(), 0x10)
         code = code.strip()
         while '  ' in code:
             code = code.replace('  ', ' ')
-        code = map(lambda s: chr(int(s, 0x10)), code.split())
-        code = ''.join(code)
+
         if address in patch:
             raise Exception("Multiple %x patches used." % address)
         patch[address] = code
+        for name in labels:
+            if labels[name] is None:
+                labels[name] = address
+
+        next_address = address + len(code.split())
+
+    for address in sorted(patch):
+        code = patch[address]
+        for name in labels:
+            if name in code:
+                target_address = labels[name]
+                jump = target_address - (address + 2)
+                if jump < 0:
+                    jump = 0x100 + jump
+                if not 0 <= jump <= 0xFF:
+                    raise Exception("Label out of range %x - %s" %
+                                    (address, code))
+                code = code.replace(name, "%x" % jump)
+
+        code = map(lambda s: chr(int(s, 0x10)), code.split())
+        code = ''.join(code)
+        patch[address] = code
+
     f.close()
     return patch
 
