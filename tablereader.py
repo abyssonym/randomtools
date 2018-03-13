@@ -24,6 +24,7 @@ GRAND_OBJECT_DICT = {}
 PATCH_FILENAMES = []
 OPTION_FILENAMES = []
 NOVERIFY_PATCHES = []
+CMP_PATCH_FILENAMES = []
 RANDOM_DEGREE = 0.25
 SEED = None
 OPEN_FILES = {}
@@ -105,7 +106,7 @@ def patch_filename_to_bytecode(patchfilename):
     definitions = {}
     labels = {}
     next_address = None
-    f = open(path.join(tblpath, patchfilename))
+    f = open(patchfilename)
     for line in f:
         line = line.strip()
         if '#' in line:
@@ -199,14 +200,69 @@ def select_patches():
 
 
 def write_patch(outfile, patchfilename):
+    patchpath = path.join(tblpath, patchfilename)
+    pf = open(patchpath, 'r+b')
+    magic_word = pf.read(5)
+    pf.close()
     f = get_open_file(outfile)
-    patch = patch_filename_to_bytecode(patchfilename)
+    if magic_word == "\xff\xbcCMP":
+        CMP_PATCH_FILENAMES.append(patchfilename)
+        return write_cmp_patch(f, patchpath)
+
+    patch = patch_filename_to_bytecode(patchpath)
     for address, code in sorted(patch.items()):
         f.seek(address)
         f.write(code)
 
     if patchfilename not in PATCH_FILENAMES:
         PATCH_FILENAMES.append(patchfilename)
+
+
+def write_cmp_patch(outfile, patchfilename, verify=False):
+    from interface import get_sourcefile
+
+    sourcefile = open(get_sourcefile(), 'r+b')
+    patchfile = open(patchfilename, 'r+b')
+    magic_word = patchfile.read(5)
+    if magic_word != "\xFF\xBCCMP":
+        raise Exception("Not a CMP patch.")
+    version = ord(patchfile.read(1))
+    pointer_length = ord(patchfile.read(1))
+
+    while True:
+        command = patchfile.read(1)
+        if not command:
+            break
+        if command == '\x00':
+            address = read_multi(patchfile, length=pointer_length)
+            outfile.seek(address)
+        elif command == '\x01':
+            chunksize = read_multi(patchfile, length=2)
+            address = read_multi(patchfile, length=pointer_length)
+            sourcefile.seek(address)
+            s = sourcefile.read(chunksize)
+            if not verify:
+                outfile.write(s)
+            elif verify:
+                s2 = outfile.read(len(s))
+                if s != s2:
+                    raise Exception("Patch write conflict %s %x" % (
+                        patchfilename, outfile.tell()-len(s2)))
+        elif command == '\x02':
+            chunksize = read_multi(patchfile, length=2)
+            s = patchfile.read(chunksize)
+            if not verify:
+                outfile.write(s)
+            elif verify:
+                s2 = outfile.read(len(s))
+                if s != s2:
+                    raise Exception("Patch write conflict %s %x" % (
+                        patchfilename, outfile.tell()-len(s2)))
+        else:
+            raise Exception("Unexpected EOF")
+
+    sourcefile.close()
+    patchfile.close()
 
 
 def write_patches(outfile):
@@ -227,7 +283,11 @@ def verify_patches(outfile):
     for patchfilename in PATCH_FILENAMES:
         if patchfilename in NOVERIFY_PATCHES:
             continue
-        patch = patch_filename_to_bytecode(patchfilename)
+        patchpath = path.join(tblpath, patchfilename)
+        if patchfilename in CMP_PATCH_FILENAMES:
+            write_cmp_patch(f, patchpath, verify=True)
+            continue
+        patch = patch_filename_to_bytecode(patchpath)
         for address, code in sorted(patch.items()):
             f.seek(address)
             written = f.read(len(code))

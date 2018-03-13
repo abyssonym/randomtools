@@ -27,6 +27,11 @@ def get_all_objects():
     return all_objects
 
 
+def get_sourcefile():
+    global sourcefile
+    return sourcefile
+
+
 def get_outfile():
     global outfile
     return outfile
