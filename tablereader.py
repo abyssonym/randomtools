@@ -147,7 +147,8 @@ def patch_filename_to_bytecode(patchfilename):
 
         if address in patch:
             raise Exception("Multiple %x patches used." % address)
-        patch[address] = code
+        if code:
+            patch[address] = code
         for name in labels:
             if labels[name] is None:
                 labels[name] = address
