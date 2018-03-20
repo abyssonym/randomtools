@@ -592,6 +592,12 @@ class TableObject(object):
         return sorted(cls.every,
                       key=lambda c: (c.rank, random.random(), c.index))
 
+    def assert_unchanged(self):
+        for attr in self.old_data:
+            if getattr(self, attr) != self.old_data[attr]:
+                raise AssertionError('{0} {1} attribute "{2}" changed.'.format(
+                    self.__class__.__name__, ("%x" % self.index), attr))
+
     def get_similar(self, candidates=None, override_outsider=False,
                     random_degree=None):
         if self.rank < 0:
