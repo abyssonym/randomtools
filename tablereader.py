@@ -5,6 +5,7 @@ from os import path
 from hashlib import md5
 import string
 from copy import copy
+from collections import Counter
 
 
 try:
@@ -297,6 +298,10 @@ def verify_patches(outfile):
                     "Patch %x conflicts with modified data." % address)
 
 
+def get_activated_patches():
+    return list(PATCH_FILENAMES)
+
+
 def sort_good_order(objects):
     objects = sorted(objects, key=lambda o: o.__name__)
     objects = [o for o in objects if o.__name__ in TABLE_SPECS]
@@ -577,10 +582,26 @@ class TableObject(object):
 
     @property
     def rank(self):
-        return self.index
+        return 1
+
+    @property
+    def ranked_ratio(self):
+        ranked = [o for o in self.ranked if o.rank >= 0]
+        if self not in ranked:
+            return None
+        index = ranked.index(self)
+        return index / float(len(ranked)-1)
+
+    @property
+    def mutate_valid(self):
+        return True
 
     @property
     def intershuffle_valid(self):
+        return True
+
+    @property
+    def magic_mutate_valid(self):
         return True
 
     @property
@@ -598,21 +619,50 @@ class TableObject(object):
                 raise AssertionError('{0} {1} attribute "{2}" changed.'.format(
                     self.__class__.__name__, ("%x" % self.index), attr))
 
+    def get_bit_similarity_score(self, other, bitmasks=None):
+        if bitmasks is None:
+            bitmasks = self.bit_similarity_attributes
+        score = 0
+        for attribute, mask in sorted(bitmasks.items()):
+            a = self.old_data[attribute]
+            if isinstance(other, dict):
+                b = other[attribute]
+            else:
+                b = other.old_data[attribute]
+            i = 0
+            while True:
+                bit = (1 << i)
+                if bit > mask:
+                    break
+                i += 1
+                if not bit & mask:
+                    continue
+                if (a & bit) == (b & bit):
+                    score += 1
+
+        return score
+
     def get_similar(self, candidates=None, override_outsider=False,
                     random_degree=None):
         if self.rank < 0:
             return self
-        if candidates is None:
-            candidates = [c for c in self.ranked if c.rank >= 0]
-        candidates = sorted(set(candidates))
         if random_degree is None:
             random_degree = self.random_degree
+
+        if candidates is None:
+            candidates = [c for c in self.ranked if c.rank >= 0]
+        candidates = sorted(set(candidates),
+                            key=lambda c: (c.rank, random.random(), c.index))
 
         if len(candidates) <= 0:
             raise Exception("No candidates for get_similar")
 
         if override_outsider and self not in candidates:
-            candidates.append(self)
+            index = len([c for c in candidates if c.rank < self.rank])
+            index2 = len([c for c in candidates if c.rank <= self.rank])
+            if index2 > index:
+                index = random.randint(index, index2)
+            candidates.insert(index, self)
         elif self not in candidates:
             raise Exception("Must manually override outsider elements.")
         else:
@@ -621,8 +671,6 @@ class TableObject(object):
         if len(candidates) <= 1:
             return candidates[0]
 
-        candidates = sorted(candidates,
-                            key=lambda c: (c.rank, random.random(), c.index))
         index = candidates.index(self)
         if override_outsider:
             candidates.remove(self)
@@ -887,6 +935,7 @@ class TableObject(object):
         for name, size, other in specsattrs:
             value = getattr(self, name)
             if other in [None, "int"]:
+                assert value >= 0
                 f.seek(pointer)
                 write_multi(f, value, length=size)
                 pointer += size
@@ -981,8 +1030,22 @@ class TableObject(object):
                 f.write(chr(cls.specsdelimitval))
                 pointer += 1
 
+    def preclean(self):
+        return
+
     def cleanup(self):
         return
+
+    @classmethod
+    def full_preclean(cls):
+        if hasattr(cls, "after_order"):
+            for cls2 in cls.after_order:
+                if not (hasattr(cls2, "precleaned") and cls2.precleaned):
+                    raise Exception("Preclean order violated: %s %s"
+                                    % (cls, cls2))
+        for o in cls.every:
+            o.preclean()
+        cls.precleaned = True
 
     @classmethod
     def full_cleanup(cls):
@@ -1018,6 +1081,8 @@ class TableObject(object):
         cls.groupshuffle()
         cls.class_reseed("inter")
         cls.intershuffle()
+        cls.class_reseed("randsel")
+        cls.randomselect()
         cls.class_reseed("full")
         cls.shuffle_all()
         cls.randomize_all()
@@ -1032,6 +1097,7 @@ class TableObject(object):
             o.reseed(salt="mut")
             o.mutate()
             o.mutate_bits()
+            o.magic_mutate_bits()
             o.mutated = True
 
     @classmethod
@@ -1056,6 +1122,9 @@ class TableObject(object):
         if not hasattr(self, "mutate_attributes"):
             return
 
+        if not self.mutate_valid:
+            return
+
         self.reseed(salt="mut")
         for attribute in sorted(self.mutate_attributes):
             if isinstance(self.mutate_attributes[attribute], type):
@@ -1069,7 +1138,8 @@ class TableObject(object):
                 if type(minmax) is tuple:
                     minimum, maximum = minmax
                 else:
-                    values = [getattr(o, attribute) for o in self.every]
+                    values = [o.old_data[attribute] for o in self.every
+                              if o.mutate_valid]
                     minimum, maximum = min(values), max(values)
                     self.mutate_attributes[attribute] = (minimum, maximum)
                 value = getattr(self, attribute)
@@ -1089,13 +1159,115 @@ class TableObject(object):
                 value = self.get_bit(attribute)
                 self.set_bit(attribute, not value)
 
+    def magic_mutate_bits(self):
+        if (self.rank < 0 or not hasattr(self, "magic_mutate_bit_attributes")
+                or not self.magic_mutate_valid):
+            return
+
+        base_candidates = [o for o in self.every
+                           if o.magic_mutate_valid and o.rank >= 0]
+
+        if not hasattr(self.__class__, "_candidates_dict"):
+            self.__class__._candidates_dict = {}
+
+        self.reseed(salt="magmutbit")
+        for attributes in sorted(self.magic_mutate_bit_attributes):
+            masks = self.magic_mutate_bit_attributes[attributes]
+            if isinstance(attributes, basestring):
+                del(self.magic_mutate_bit_attributes[attributes])
+                attributes = tuple([attributes])
+            if masks is None:
+                masks = tuple([None for a in attributes])
+            if isinstance(masks, int):
+                masks = (masks,)
+            bitmasks = dict(zip(attributes, masks))
+            for attribute, mask in bitmasks.items():
+                if mask is None:
+                    mask = 0
+                    for c in base_candidates:
+                        mask |= getattr(c, attribute)
+                    bitmasks[attribute] = mask
+            masks = tuple([bitmasks[a] for a in attributes])
+            self.magic_mutate_bit_attributes[attributes] = masks
+
+            def obj_to_dict(o):
+                return dict([(a, getattr(o, a)) for a in attributes])
+
+            wildcard = [random.randint(0, m<<1) & m for m in masks]
+            wildcard = []
+            for attribute, mask in bitmasks.items():
+                value = random.randint(0, mask<<1) & mask
+                while True:
+                    if not value:
+                        break
+                    v = random.randint(0, value) & mask
+                    if not v & value:
+                        if bin(v).count('1') <= bin(value).count('1'):
+                            value = v
+                        if random.choice([True, False]):
+                            break
+                    else:
+                        value &= v
+                value = self.old_data[attribute] ^ value
+                wildcard.append((attribute, value))
+
+            if attributes not in self._candidates_dict:
+                candidates = []
+                for o in base_candidates:
+                    candidates.append(tuple(
+                        [getattr(o, a) for a in attributes]))
+                counted_candidates = Counter(candidates)
+                candidates = []
+                for values in sorted(counted_candidates):
+                    valdict = dict(zip(attributes, values))
+                    frequency = counted_candidates[values]
+                    frequency = int(
+                        round(frequency ** (1-(self.random_degree**0.5))))
+                    candidates.extend([valdict]*frequency)
+                self._candidates_dict[attributes] = candidates
+
+            candidates = list(self._candidates_dict[attributes])
+            candidates += [dict(wildcard)]
+            candidates = sorted(
+                candidates, key=lambda o: (
+                    self.get_bit_similarity_score(o, bitmasks=bitmasks),
+                    random.random(), o.index if hasattr(o, "index") else -1),
+                reverse=True)
+            index = candidates.index(obj_to_dict(self))
+            max_index = len(candidates)-1
+            index = mutate_normal(index, 0, max_index,
+                                  random_degree=self.random_degree, wide=True)
+            chosen = candidates[index]
+            if chosen is self:
+                continue
+            if not isinstance(chosen, dict):
+                chosen = chosen.old_data
+            for attribute, mask in sorted(bitmasks.items()):
+                diffmask = (getattr(self, attribute) ^ chosen[attribute])
+                diffmask &= mask
+                if not diffmask:
+                    continue
+                i = 0
+                while True:
+                    bit = (1 << i)
+                    i += 1
+                    if bit > diffmask:
+                        break
+                    if bit & diffmask:
+                        if random.random() < ((self.random_degree**0.5)/2.0):
+                            continue
+                        else:
+                            diffmask ^= bit
+                setattr(self, attribute, getattr(self, attribute) ^ diffmask)
+
     def randomize(self):
         if not hasattr(self, "randomize_attributes"):
             return
 
         self.reseed(salt="ran")
+        candidates = [c for c in self.every
+                      if c.rank >= 0 and c.intershuffle_valid]
         for attribute in sorted(self.randomize_attributes):
-            candidates = [c for c in self.every if c.rank >= 0]
             chosen = random.choice(candidates)
             setattr(self, attribute, chosen.old_data[attribute])
 
@@ -1124,17 +1296,19 @@ class TableObject(object):
         if random_degree is None:
             random_degree = cls.random_degree
 
+        if candidates is None:
+            candidates = list(cls.every)
+
+        candidates = [o for o in candidates
+                      if o.rank >= 0 and o.intershuffle_valid]
+
         cls.class_reseed("inter")
         hard_shuffle = False
-        if (len(set([o.rank for o in cls.every])) == 1
-                or all([o.rank == o.index for o in cls.every])):
+        if (len(set([o.rank for o in candidates])) == 1
+                or all([o.rank == o.index for o in candidates])):
             hard_shuffle = True
 
         for attributes in cls.intershuffle_attributes:
-            if candidates is None:
-                candidates = list(cls.every)
-            candidates = [o for o in candidates
-                          if o.rank >= 0 and o.intershuffle_valid]
             if hard_shuffle:
                 shuffled = list(candidates)
                 random.shuffle(shuffled)
@@ -1154,6 +1328,34 @@ class TableObject(object):
                     swaps.append(bval)
                 for a, bval in zip(candidates, swaps):
                     setattr(a, attribute, bval)
+
+    @classmethod
+    def randomselect(cls, candidates=None):
+        if not hasattr(cls, "randomselect_attributes"):
+            return
+
+        if candidates is None:
+            candidates = list(cls.every)
+        candidates = [o for o in candidates
+                      if o.rank >= 0 and o.intershuffle_valid]
+        if len(set([o.rank for o in candidates])) <= 1:
+            hard_shuffle = True
+        else:
+            candidates = sorted(candidates, key=lambda o: o.rank)
+            hard_shuffle = False
+
+        for o in candidates:
+            o.reseed("randsel")
+            for attributes in cls.randomselect_attributes:
+                if hard_shuffle:
+                    o2 = random.choice(candidates)
+                else:
+                    o2 = o.get_similar(candidates)
+                if isinstance(attributes, basestring):
+                    attributes = [attributes]
+                for attribute in attributes:
+                    setattr(o, attribute, o2.old_data[attribute])
+            o.random_selected = True
 
     @classmethod
     def groupshuffle(cls):

@@ -259,10 +259,12 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
         user_input_flags = flags
 
     write_patches(outfile)
-    print "Loading game objects..."
+    print "Loading and ranking game objects..."
     objects = sort_good_order(objects)
     for o in objects:
         o.every
+    for o in objects:
+        o.ranked
 
     for o in objects:
         if hasattr(o, "flag_description") and o.flag in flags:
