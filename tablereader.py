@@ -398,7 +398,7 @@ def shuffle_normal(candidates, random_degree=None, wide=False):
         new_indexes[c] = new_index
     if candidates and hasattr(candidates[0], "index"):
         shuffled = sorted(candidates,
-            key=lambda c: (new_indexes[c], random.random(), c.index))
+            key=lambda c: (new_indexes[c], c.signature, c.index))
     else:
         shuffled = sorted(candidates,
             key=lambda c: (new_indexes[c], random.random(), c))
@@ -611,7 +611,7 @@ class TableObject(object):
     @classproperty
     def ranked(cls):
         return sorted(cls.every,
-                      key=lambda c: (c.rank, random.random(), c.index))
+                      key=lambda c: (c.rank, c.signature, c.index))
 
     def assert_unchanged(self):
         for attr in self.old_data:
@@ -650,9 +650,9 @@ class TableObject(object):
             random_degree = self.random_degree
 
         if candidates is None:
-            candidates = [c for c in self.ranked if c.rank >= 0]
+            candidates = [c for c in self.every if c.rank >= 0]
         candidates = sorted(set(candidates),
-                            key=lambda c: (c.rank, random.random(), c.index))
+                            key=lambda c: (c.rank, c.signature, c.index))
 
         if len(candidates) <= 0:
             raise Exception("No candidates for get_similar")
@@ -687,9 +687,9 @@ class TableObject(object):
     @classmethod
     def get_similar_set(cls, current, candidates=None):
         if candidates is None:
-            candidates = [c for c in cls.ranked if c.rank >= 0]
+            candidates = [c for c in cls.every if c.rank >= 0]
         candidates = sorted(set(candidates),
-                            key=lambda c: (c.rank, random.random(), c.index))
+                            key=lambda c: (c.rank, c.signature, c.index))
         random.shuffle(sorted(current, key=lambda c: c.index))
         chosens = []
         for c in current:
@@ -1058,6 +1058,12 @@ class TableObject(object):
             o.cleanup()
         cls.cleaned = True
 
+    @cached_property
+    def signature(self):
+        s = "%s%s%s" % (
+            get_seed(), self.index, self.__class__.__name__)
+        return md5(s).hexdigest()
+
     def reseed(self, salt=""):
         s = "%s%s%s%s" % (
             get_seed(), self.index, salt, self.__class__.__name__)
@@ -1231,7 +1237,8 @@ class TableObject(object):
             candidates = sorted(
                 candidates, key=lambda o: (
                     self.get_bit_similarity_score(o, bitmasks=bitmasks),
-                    random.random(), o.index if hasattr(o, "index") else -1),
+                    o.signature if hasattr(o, "signature") else -1,
+                    o.index if hasattr(o, "index") else -1),
                 reverse=True)
             index = candidates.index(obj_to_dict(self))
             max_index = len(candidates)-1
@@ -1314,7 +1321,7 @@ class TableObject(object):
                 random.shuffle(shuffled)
             else:
                 candidates = sorted(candidates,
-                    key=lambda c: (c.rank, random.random(), c.index))
+                    key=lambda c: (c.rank, c.signature, c.index))
                 shuffled = shuffle_normal(candidates,
                                           random_degree=random_degree)
 
@@ -1341,7 +1348,6 @@ class TableObject(object):
         if len(set([o.rank for o in candidates])) <= 1:
             hard_shuffle = True
         else:
-            candidates = sorted(candidates, key=lambda o: o.rank)
             hard_shuffle = False
 
         for o in candidates:
