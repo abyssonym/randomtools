@@ -1,5 +1,5 @@
 from utils import (read_multi, write_multi, classproperty,
-                   random, md5hash)
+                   random, md5hash, cached_property)
 from functools import total_ordering
 from os import path
 from hashlib import md5
@@ -584,7 +584,7 @@ class TableObject(object):
     def rank(self):
         return 1
 
-    @property
+    @cached_property
     def ranked_ratio(self):
         ranked = [o for o in self.ranked if o.rank >= 0]
         if self not in ranked:
