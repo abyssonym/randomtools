@@ -52,6 +52,11 @@ def get_activated_codes():
     return sorted(activated_codes)
 
 
+def activate_code(code):
+    global activated_codes
+    activated_codes.add(code)
+
+
 def rewrite_snes_meta(title, version, lorom=False):
     close_file(outfile)
 
