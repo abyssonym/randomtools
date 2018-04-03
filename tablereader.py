@@ -1101,9 +1101,11 @@ class TableObject(object):
             if hasattr(o, "mutated") and o.mutated:
                 continue
             o.reseed(salt="mut")
-            o.mutate()
+            if o.mutate_valid:
+                o.mutate()
             o.mutate_bits()
-            o.magic_mutate_bits()
+            if o.magic_mutate_valid:
+                o.magic_mutate_bits()
             o.mutated = True
 
     @classmethod
