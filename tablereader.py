@@ -1272,6 +1272,8 @@ class TableObject(object):
     def randomize(self):
         if not hasattr(self, "randomize_attributes"):
             return
+        if not self.intershuffle_valid:
+            return
 
         self.reseed(salt="ran")
         candidates = [c for c in self.every
