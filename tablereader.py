@@ -201,7 +201,9 @@ def select_patches():
         PATCH_FILENAMES.remove(pfn)
 
 
-def write_patch(outfile, patchfilename):
+def write_patch(outfile, patchfilename, noverify=False):
+    if noverify:
+        NOVERIFY_PATCHES.append(patchfilename)
     patchpath = path.join(tblpath, patchfilename)
     pf = open(patchpath, 'r+b')
     magic_word = pf.read(5)
