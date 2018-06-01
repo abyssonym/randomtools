@@ -1260,8 +1260,13 @@ class TableObject(object):
                 while True:
                     bit = (1 << i)
                     i += 1
-                    if bit > diffmask:
+                    if bit > (diffmask | mask):
                         break
+
+                    if (bit & mask and not bit & diffmask
+                            and random.random() < self.random_degree ** 6):
+                        diffmask |= bit
+
                     if bit & diffmask:
                         if random.random() < ((self.random_degree**0.5)/2.0):
                             continue
