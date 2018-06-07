@@ -651,6 +651,8 @@ class TableObject(object):
 
         if candidates is None:
             candidates = [c for c in self.every if c.rank >= 0]
+        else:
+            assert all([c.rank >= 0 for c in candidates])
         candidates = sorted(set(candidates),
                             key=lambda c: (c.rank, c.signature, c.index))
 
