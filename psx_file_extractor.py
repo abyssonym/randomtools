@@ -161,6 +161,9 @@ class FileManager(object):
     def export_file(self, name, filepath=None):
         if filepath is None:
             filepath = path.join(self.dirname, name)
+        dirname = path.split(filepath)[0]
+        if dirname and not path.exists(dirname):
+            makedirs(dirname)
         f = self.get_file(name)
         if f is None:
             return None
