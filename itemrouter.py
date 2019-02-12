@@ -1,5 +1,6 @@
 from randomtools.utils import utilrandom as random
 from collections import defaultdict
+from itertools import product
 
 class ItemRouterException(Exception): pass
 
@@ -8,7 +9,6 @@ class ItemRouter:
         self.definitions = set([])
         self.assign_conditions = {}
         self.assignments = {}
-        self.preferences = {}
 
         created_lambdas = []
         f = open(requirefile)
@@ -22,12 +22,6 @@ class ItemRouter:
             if line.startswith(".def "):
                 line = line[5:]
                 definition = True
-            elif line.startswith(".prefer "):
-                line = line[8:]
-                preferred, items = line.split(' ')
-                items = items.split(',')
-                self.preferences[preferred] = items
-                continue
             else:
                 definition = False
 
@@ -44,46 +38,61 @@ class ItemRouter:
         self.requirements = set([r for label in self.assign_conditions
                                  for r in self.get_requirements(label)])
 
-    def check_assignable(self, label):
-        if (not hasattr(self, "_previous_assigned") or
-                self._previous_assigned != self.assigned_items):
-            self._previous_assigned = self.assigned_items
-            self._assignable_cache = {}
-        elif label in self._assignable_cache:
-            return self._assignable_cache[label]
-        conditions = self.assign_conditions[label]
-        if conditions == '*':
-            return True
-        for or_cond in conditions.split('|'):
-            for and_cond in or_cond.split('&'):
-                if and_cond in self.definitions:
-                    truth = self.check_assignable(and_cond)
-                else:
-                    truth = and_cond in self.assigned_items
-                if not truth:
-                    break
-            else:
-                self._assignable_cache[label] = True
-                return self.check_assignable(label)
-        self._assignable_cache[label] = False
-        return self.check_assignable(label)
-
-    def get_total_requirements(self, label, cached=True):
-        requirements = set([])
+    def get_simplified_requirements(self, label):
+        if not hasattr(self, "_previous_simplified"):
+            self._previous_simplified = {}
+        if label in self._previous_simplified:
+            return self._previous_simplified[label]
         conditions = self.assign_conditions[label]
         if conditions == '*':
             return set([])
+        requirements = set([])
         for or_cond in conditions.split('|'):
+            subreqs = []
             for and_cond in or_cond.split('&'):
                 if and_cond in self.definitions:
-                    if cached:
-                        requirements |= self.get_requirements(and_cond)
-                    else:
-                        requirements |= self.get_total_requirements(
-                            and_cond, cached=False)
+                    subreqs.append(
+                        self.get_simplified_requirements(and_cond))
                 else:
-                    requirements.add(and_cond)
-        return requirements
+                    subreqs.append(set([frozenset([and_cond])]))
+
+            subreqs = [s for s in subreqs if s]
+            for permutation in sorted(product(*subreqs)):
+                newsubreqs = set([])
+                for p in permutation:
+                    newsubreqs |= p
+                assert all([isinstance(n, basestring) for n in newsubreqs])
+                requirements.add(frozenset(newsubreqs))
+
+        requirements = set([r for r in requirements if r])
+        for r1 in sorted(requirements):
+            for r2 in sorted(requirements):
+                if r1 < r2 and r2 in requirements:
+                    requirements.remove(r2)
+
+        assert isinstance(requirements, set)
+        assert all([isinstance(r, frozenset) for r in requirements])
+        self._previous_simplified[label] = requirements
+        return self.get_simplified_requirements(label)
+
+
+    def check_assignable(self, label):
+        requirements = self.get_simplified_requirements(label)
+        if not requirements:
+            return True
+        for and_reqs in requirements:
+            for r in and_reqs:
+                if r not in self.assigned_items:
+                    break
+            else:
+                return True
+        return False
+
+    def get_total_requirements(self, label, cached=True):
+        total = set([])
+        for r in self.get_simplified_requirements(label):
+            total |= r
+        return total
 
     def get_requirements(self, label):
         if not hasattr(self, '_req_cache'):
@@ -284,10 +293,6 @@ class ItemRouter:
                     if not candidates:
                         break
                     c = random.choice(candidates)
-                    if (chosen in self.preferences
-                            and c in self.preferences[chosen]):
-                        candidates.remove(c)
-                        continue
                     ratio = len(unlocked[c]) / float(len(unlocked[chosen]))
                     ratio = ratio ** aggression
                     if random.random() > ratio:
