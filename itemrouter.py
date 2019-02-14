@@ -77,7 +77,13 @@ class ItemRouter:
         maxlen = max(len(l) for l in locations)
         s = ""
         for l in locations:
-            s += ("{0:%s}: {1}\n" % maxlen).format(l, self.assignments[l])
+            item = self.assignments[l]
+            name = self.get_best_definition_by_requirement(item)
+            if name is None:
+                name = item
+            else:
+                name = "{0} {1}".format(item, name)
+            s += ("{0:%s}: {1}\n" % maxlen).format(l, name)
         return s.strip()
 
     @cached_property
@@ -221,6 +227,17 @@ class ItemRouter:
         assert all([isinstance(r, frozenset) for r in requirements])
         self._previous_simplified[label] = requirements
         return self.get_simplified_requirements(label)
+
+    def get_best_definition_by_requirement(self, req):
+        ranker = lambda d: (
+            max(len(reqs) for reqs in
+                self.get_simplified_requirements(d) | set([])), d)
+        candidates = [d for d in self.definitions
+                      if any(req in reqs for reqs in
+                             self.get_simplified_requirements(d))]
+        if not candidates:
+            return None
+        return sorted(candidates, key=ranker)[0]
 
     def check_assignable(self, label):
         if not hasattr(self, "_check_assignable_previous_items"):
