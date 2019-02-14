@@ -286,7 +286,7 @@ class ItemRouter:
         if new_locations:
             self.location_ranks[max_rank+1] = new_locations
 
-    def assign_item(self, item):
+    def assign_item(self, item, aggression=None):
         self._assignable_locations = None
         assignable_locations = self.get_valid_locations(item)
         if not assignable_locations:
@@ -301,10 +301,11 @@ class ItemRouter:
             chosen = random.choice(sorted(candidates))
             self.goal_requirements = None
         else:
-            new_locations = self.get_item_unlocked_locations(item)
-            aggression = self.aggression
-            if not new_locations:
-                aggression = max(aggression-1, 1)
+            if aggression is None:
+                aggression = self.aggression
+                new_locations = self.get_item_unlocked_locations(item)
+                if not new_locations:
+                    aggression = max(aggression-1, 1)
 
             candidates = sorted(assignable_locations,
                                 key=lambda c: (self.get_location_rank(c),
