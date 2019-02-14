@@ -240,6 +240,16 @@ class ItemRouter:
                 return i
         return None
 
+    def get_complexity_rank(self, location):
+        if not self.get_simplified_requirements(location):
+            return 0
+        a_value = min([len(reqs) for reqs in
+                       self.get_simplified_requirements(location)])
+        b_value = min([len(reqs | self.assigned_items)
+                       / float(len(reqs & self.assigned_items)+1)
+                       for reqs in self.get_simplified_requirements(location)])
+        return a_value, b_value
+
     def sort_by_item_usage(self, locations):
         fail_counter = defaultdict(int)
         for item in self.assigned_items:
@@ -307,9 +317,10 @@ class ItemRouter:
                 if not new_locations:
                     aggression = max(aggression-1, 1)
 
-            candidates = sorted(assignable_locations,
-                                key=lambda c: (self.get_location_rank(c),
-                                               self.rankrand(c)))
+            candidates = sorted(
+                assignable_locations,
+                key=lambda c: (self.get_location_rank(c),
+                               self.get_complexity_rank(c), self.rankrand(c)))
             if self.goal_requirements is not None:
                 sorted_goals = self.get_bottleneck_goals()
                 goal = sorted_goals[0]
@@ -418,7 +429,6 @@ class ItemRouter:
             else:
                 sorted_goals = self.get_bottleneck_goals()
                 max_index = len(sorted_goals)-1
-                #index = int(round(max_index * (random.random() ** 2)))
                 index = 0
                 goal = sorted_goals[index]
                 temp = [c for c in candidates
@@ -426,8 +436,6 @@ class ItemRouter:
                         self.get_valid_locations(
                             goal, include_unreachable=True)]
                 if temp:
-                    #candidates = temp + [c for c in candidates
-                    #                     if c not in temp]
                     candidates = temp
                     max_index = len(candidates)-1
                     index = int(round(max_index * (random.random() ** 2)))
