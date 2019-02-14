@@ -1,6 +1,7 @@
 from randomtools.utils import cached_property, utilrandom as random
 from collections import defaultdict
 from itertools import product
+from sys import stdout
 
 class ItemRouterException(Exception): pass
 
@@ -143,6 +144,8 @@ class ItemRouter:
         d = defaultdict(set)
         for label in self.all_locations:
             for req in self.get_simplified_requirements(label):
+                if req is None:
+                    continue
                 req = tuple(sorted(req))
                 d[req].add(label)
         return d
@@ -155,11 +158,19 @@ class ItemRouter:
     def rankrand(self, thing):
         return hash(str(thing) + str(self.routeseed))
 
-    def get_simplified_requirements(self, label):
+    def get_simplified_requirements(self, label, parent_labels=None,
+                                    force=False):
         if not hasattr(self, "_previous_simplified"):
             self._previous_simplified = {}
-        if label in self._previous_simplified:
+        if label in self._previous_simplified and not force:
             return self._previous_simplified[label]
+
+        if parent_labels is None:
+            parent_labels = []
+        if parent_labels.count(label) > 5:
+            return None
+        parent_labels.append(label)
+
         conditions = self.assign_conditions[label]
         if conditions == '*':
             return set([])
@@ -169,17 +180,36 @@ class ItemRouter:
             for and_cond in or_cond.split('&'):
                 if and_cond in self.definitions:
                     subreqs.append(
-                        self.get_simplified_requirements(and_cond))
+                        self.get_simplified_requirements(and_cond,
+                                                         parent_labels=parent_labels))
                 else:
                     subreqs.append(set([frozenset([and_cond])]))
+                if None in subreqs:
+                    break
+            if None in subreqs:
+                requirements.add(None)
+                continue
+
+            if len(subreqs) >= 1 and all(reqs == set([]) for reqs in subreqs):
+                requirements = set([])
+                self._previous_simplified[label] = requirements
+                return self.get_simplified_requirements(label)
 
             subreqs = [s for s in subreqs if s]
             for permutation in sorted(product(*subreqs)):
+                if None in permutation:
+                    requirements.add(None)
+                    continue
                 newsubreqs = set([])
                 for p in permutation:
                     newsubreqs |= p
                 assert all([isinstance(n, basestring) for n in newsubreqs])
                 requirements.add(frozenset(newsubreqs))
+
+        if None in requirements and requirements == {None}:
+            stdout.write('.')
+            self._previous_simplified[label] = requirements
+            return self.get_simplified_requirements(label)
 
         requirements = set([r for r in requirements if r])
         for r1 in sorted(requirements):
@@ -201,6 +231,9 @@ class ItemRouter:
         if label in self._check_assignable_cache:
             return self._check_assignable_cache[label]
         requirements = self.get_simplified_requirements(label)
+        if requirements == {None}:
+            return False
+
         result = False
         if not requirements:
             result = True
@@ -373,10 +406,7 @@ class ItemRouter:
         if self.goal_requirements in candidates:
             return self.goal_requirements
 
-        ranker = lambda k: (
-            len(self.requirements_locations[k]) / float(len(k)),
-            self.rankrand(k))
-        candidates = sorted(candidates, key=ranker)
+        candidates = sorted(candidates)
         chosen = random.choice(candidates)
         self.goal_requirements = chosen
         return chosen
@@ -446,7 +476,44 @@ class ItemRouter:
         self.assign_item(chosen)
         return True
 
+    def prep_requirements(self):
+        # this section repeatedly runs the algorithm to ensure stable results
+        stdout.write("Analyzing key/lock requirements now.\n")
+        stdout.write("Loop #0: ")
+        for label in sorted(self.assign_conditions):
+            self.get_simplified_requirements(label)
+        stdout.write("\n")
+        for i in xrange(1000):
+            stdout.write("Loop #%s: " % (i+1))
+            break_flag = True
+            conditions = sorted(self.assign_conditions)
+            #random.shuffle(conditions)  # dunno if this has any effect
+            for label in conditions:
+                old_requirements = self.get_simplified_requirements(label)
+                new_requirements = self.get_simplified_requirements(label,
+                                                                    force=True)
+                if old_requirements != new_requirements:
+                    break_flag = False
+            stdout.write("\n")
+            if break_flag:
+                break
+        else:
+            raise ItemRouterException("Could not analyze requirements.")
+
+        # this improves RNG stability for some reason?
+        for label in sorted(self.assign_conditions):
+            if self.get_simplified_requirements(label) == {None}:
+                if label in self.assign_conditions:
+                    del(self.assign_conditions[label])
+                if label in self.definitions:
+                    self.definitions.remove(label)
+
+        print "Done analyzing."
+
     def assign_everything(self):
+        self.prep_requirements()
+        print "Assigning items to locations."
+        random.seed(self.routeseed)
         if not hasattr(self, "custom_assignments"):
             self.custom_assignments = {}
         if not hasattr(self, "location_ranks"):
