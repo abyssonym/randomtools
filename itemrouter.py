@@ -237,6 +237,10 @@ class ItemRouter:
                              self.get_simplified_requirements(d))]
         if not candidates:
             return None
+        temp = [c for c in candidates if req in self.assign_conditions[c]]
+        candidates = temp or candidates
+        temp = [c for c in candidates if req == self.assign_conditions[c]]
+        candidates = temp or candidates
         return sorted(candidates, key=ranker)[0]
 
     def check_assignable(self, label):
