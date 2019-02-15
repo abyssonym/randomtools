@@ -2,6 +2,7 @@ from randomtools.utils import cached_property, utilrandom as random
 from collections import defaultdict
 from itertools import product
 from sys import stdout
+from hashlib import md5
 
 class ItemRouterException(Exception): pass
 
@@ -161,7 +162,7 @@ class ItemRouter:
                        if k not in self.assignments])
 
     def rankrand(self, thing):
-        return hash(str(thing) + str(self.routeseed))
+        return md5(str(thing) + str(self.routeseed)).hexdigest()
 
     def get_simplified_requirements(self, label, parent_labels=None,
                                     force=False):
@@ -185,8 +186,8 @@ class ItemRouter:
             for and_cond in or_cond.split('&'):
                 if and_cond in self.definitions:
                     subreqs.append(
-                        self.get_simplified_requirements(and_cond,
-                                                         parent_labels=parent_labels))
+                        self.get_simplified_requirements(
+                            and_cond, parent_labels=parent_labels))
                 else:
                     subreqs.append(set([frozenset([and_cond])]))
                 if None in subreqs:
@@ -368,10 +369,9 @@ class ItemRouter:
                 if not new_locations:
                     aggression = max(aggression-1, 1)
 
-            candidates = sorted(
-                assignable_locations,
-                key=lambda c: (self.get_location_rank(c),
-                               self.get_complexity_rank(c), self.rankrand(c)))
+            ranker = lambda c: (self.get_location_rank(c),
+                                self.get_complexity_rank(c), self.rankrand(c))
+            candidates = sorted(assignable_locations, key=ranker)
             if self.goal_requirements is not None:
                 sorted_goals = self.get_bottleneck_goals()
                 goal = sorted_goals[0]
@@ -495,12 +495,12 @@ class ItemRouter:
     def prep_requirements(self):
         # this section repeatedly runs the algorithm to ensure stable results
         stdout.write("Analyzing key/lock requirements now.\n")
-        stdout.write("Loop #0: ")
+        stdout.write("Loop 0: ")
         for label in sorted(self.assign_conditions):
             self.get_simplified_requirements(label)
         stdout.write("\n")
         for i in xrange(1000):
-            stdout.write("Loop #%s: " % (i+1))
+            stdout.write("Loop %s: " % (i+1))
             break_flag = True
             conditions = sorted(self.assign_conditions)
             #random.shuffle(conditions)  # dunno if this has any effect
