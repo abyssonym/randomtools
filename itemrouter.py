@@ -117,7 +117,6 @@ class ItemRouter:
             return self._assignable_locations
         assignable = set([k for k in self.unassigned_locations if
                           self.check_assignable(k)])
-        assignable -= set(self.custom_assignments.keys())
         self._assignable_locations = assignable
         return self.assignable_locations
 
@@ -333,9 +332,11 @@ class ItemRouter:
         self.custom_assignments = dict(custom_assignments)
 
     def force_custom(self):
-        for l, item in self.unassigned_custom_assignments:
+        for l, item in self.custom_assignments.items():
+            if l in self.assignments and self.assignments[l] != item:
+                print ("WARNING: Custom item assignment %s may be a softlock."
+                       % (l, item))
             self.assignments[l] = item
-            del(self.custom_assignments[l])
 
     def assign_item_location(self, item, location):
         assert location in self.get_valid_locations(item)
@@ -393,7 +394,6 @@ class ItemRouter:
         locations = set(locations) & set(self.assignable_locations)
         for l in locations:
             self.assign_item_location(self.custom_assignments[l], l)
-            del(self.custom_assignments[l])
         if locations:
             return True
         return False
@@ -415,8 +415,7 @@ class ItemRouter:
     def choose_requirements(self):
         candidates = sorted([
             r for r in self.requirements_locations
-            if self.requirements_locations[r] & self.unreachable_locations
-            and not set(r) & set(self.custom_assignments.values())])
+            if self.requirements_locations[r] & self.unreachable_locations])
         if not candidates:
             self.goal_requirements = None
             return None
