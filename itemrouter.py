@@ -7,12 +7,12 @@ from hashlib import md5
 class ItemRouterException(Exception): pass
 
 class ItemRouter:
-    def __init__(self, requirefile, restrictfile=None, aggression=3):
+    def __init__(self, requirefile, restrictfile=None, linearity=0.8):
         self.definitions = set([])
         self.restrictions = {}
         self.assign_conditions = {}
         self.assignments = {}
-        self.aggression = aggression
+        self.linearity = linearity
 
         self.routeseed = random.randint(0, 9999999999)
 
@@ -371,27 +371,29 @@ class ItemRouter:
         if new_locations:
             self.location_ranks[max_rank+1] = new_locations
 
-    def assign_item(self, item, aggression=None):
+    def assign_item(self, item, linearity=None):
         self._assignable_locations = None
         assignable_locations = self.get_valid_locations(item)
         if not assignable_locations:
             self.force_custom()
             raise ItemRouterException("No assignable locations: %s." % item)
 
-        if (self.goal_requirements
-                and assignable_locations
-                & self.requirements_locations[self.goal_requirements]):
-            candidates = (self.requirements_locations[self.goal_requirements]
-                          & assignable_locations)
+        candidates = None
+        if self.old_goal_requirements:
+            candidates = (
+                self.requirements_locations[self.old_goal_requirements]
+                & assignable_locations)
+
+        if candidates:
             candidates = self.try_filter_no_custom_locations(candidates)
             chosen = random.choice(sorted(candidates))
-            self.goal_requirements = None
+            self.old_goal_requirements = None
         else:
-            if aggression is None:
-                aggression = self.aggression
+            if linearity is None:
+                linearity = self.linearity
                 new_locations = self.get_item_unlocked_locations(item)
                 if not new_locations:
-                    aggression = max(aggression-1, 1)
+                    linearity = linearity ** 2
 
             ranker = lambda c: (self.get_location_rank(c),
                                 self.get_complexity_rank(c), self.rankrand(c))
@@ -406,7 +408,8 @@ class ItemRouter:
                     if temp:
                         candidates = temp
             max_index = len(candidates)-1
-            index = int(round(max_index * (1-(random.random() ** aggression))))
+            weighted_value = (random.random() ** (1-linearity))
+            index = int(round(max_index * weighted_value))
             chosen = candidates[index]
 
         rank = [i for i in self.location_ranks
@@ -440,6 +443,9 @@ class ItemRouter:
         self.goal_requirements = None
 
     def choose_requirements(self):
+        if not hasattr(self, "old_goal_requirements"):
+            self.old_goal_requirements = None
+
         candidates = sorted([
             r for r in self.requirements_locations
             if self.requirements_locations[r] & self.unreachable_locations])
@@ -449,9 +455,23 @@ class ItemRouter:
         if self.goal_requirements in candidates:
             return self.goal_requirements
 
+        candidates += [c for c in candidates if set(c) & self.assigned_items]
         candidates = sorted(candidates)
         chosen = random.choice(candidates)
-        self.goal_requirements = chosen
+        while True:
+            candidates = [c for c in candidates if len(c) > len(chosen)
+                          and self.requirements_locations[c]
+                          < self.requirements_locations[chosen]]
+            if candidates:
+                newchoice = random.choice(candidates + [chosen])
+                if newchoice != chosen:
+                    chosen = newchoice
+                    continue
+            break
+
+        if self.goal_requirements != chosen:
+            self.old_goal_requirements = self.goal_requirements
+            self.goal_requirements = chosen
         return chosen
 
     def get_bottleneck_value(self, item):
