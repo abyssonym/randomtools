@@ -722,6 +722,16 @@ class TableObject(object):
         else:
             raise Exception("Bad index.")
 
+    @classmethod
+    def get_by_pointer(cls, pointer):
+        objs = [o for o in cls.every if o.pointer == pointer]
+        if len(objs) == 1:
+            return objs[0]
+        elif len(objs) >= 2:
+            raise Exception("Too many matching objects.")
+        else:
+            raise Exception("No matching objects.")
+
     @classproperty
     def groups(cls):
         returndict = {}
