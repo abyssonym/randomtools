@@ -275,7 +275,7 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
         if hasattr(o, "flag_description") and o.flag in flags:
             print "Randomizing %s." % o.flag_description.lower()
         if not hasattr(o, "flag") or o.flag in flags:
-            random.seed(seed)
+            o.class_reseed('full_randomize')
             o.full_randomize()
         o.randomize_step_finished = True
 
@@ -286,9 +286,13 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
 def clean_and_write(objects):
     objects = sort_good_order(objects)
     for o in objects:
+        o.class_reseed('preclean')
+        o.full_preclean()
+
+    for o in objects:
         if hasattr(o, "flag_description") and o.flag in get_flags():
             print "Cleaning %s." % o.flag_description.lower()
-        random.seed(get_seed()+1)
+        o.class_reseed('cleanup')
         o.full_cleanup()
 
     print "Saving game objects..."

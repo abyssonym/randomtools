@@ -1048,6 +1048,7 @@ class TableObject(object):
                     raise Exception("Preclean order violated: %s %s"
                                     % (cls, cls2))
         for o in cls.every:
+            o.reseed('preclean')
             o.preclean()
         cls.precleaned = True
 
@@ -1059,6 +1060,7 @@ class TableObject(object):
                     raise Exception("Clean order violated: %s %s"
                                     % (cls, cls2))
         for o in cls.every:
+            o.reseed('cleanup')
             o.cleanup()
         cls.cleaned = True
 
