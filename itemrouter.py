@@ -552,7 +552,10 @@ class ItemRouter:
         for i in xrange(1000):
             stdout.write("Loop %s: " % (i+1))
             break_flag = True
-            conditions = sorted(self.assign_conditions)
+            if i % 2:
+                conditions = sorted(self.assign_conditions)
+            else:
+                conditions = sorted(self.assign_conditions, reverse=True)
             #random.shuffle(conditions)  # dunno if this has any effect
             for label in conditions:
                 old_requirements = self.get_simplified_requirements(label)
