@@ -1154,12 +1154,17 @@ class TableObject(object):
 
         self.reseed(salt="mut")
         for attribute in sorted(self.mutate_attributes):
+            mutatt = getattr(self, attribute)
+            if not isinstance(mutatt, list):
+                mutatt = [mutatt]
+            newatt = []
+
             if isinstance(self.mutate_attributes[attribute], type):
                 tob = self.mutate_attributes[attribute]
-                index = getattr(self, attribute)
-                tob = tob.get(index)
-                tob = tob.get_similar()
-                setattr(self, attribute, tob.index)
+                for ma in mutatt:
+                    tob = tob.get(ma)
+                    tob = tob.get_similar()
+                    newatt.append(tob.index)
             else:
                 minmax = self.mutate_attributes[attribute]
                 if type(minmax) is tuple:
@@ -1167,14 +1172,22 @@ class TableObject(object):
                 else:
                     values = [o.old_data[attribute] for o in self.every
                               if o.mutate_valid]
+                    if isinstance(values[0], list):
+                        values = [v2 for v1 in values for v2 in v1]
                     minimum, maximum = min(values), max(values)
                     self.mutate_attributes[attribute] = (minimum, maximum)
-                value = getattr(self, attribute)
-                if value < minimum or value > maximum:
-                    continue
-                value = mutate_normal(value, minimum, maximum,
-                                      random_degree=self.random_degree)
-                setattr(self, attribute, value)
+
+                for ma in mutatt:
+                    if ma < minimum or ma > maximum:
+                        continue
+                    ma = mutate_normal(ma, minimum, maximum,
+                                       random_degree=self.random_degree)
+                    newatt.append(ma)
+
+            if not isinstance(self.old_data[attribute], list):
+                assert len(newatt) == 1
+                newatt = newatt[0]
+            setattr(self, attribute, newatt)
 
     def mutate_bits(self):
         if not hasattr(self, "mutate_bit_attributes"):
