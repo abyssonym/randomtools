@@ -646,7 +646,10 @@ class TableObject(object):
         return score
 
     def get_similar(self, candidates=None, override_outsider=False,
-                    random_degree=None):
+                    random_degree=None, allow_intershuffle_invalid=False):
+        if not (self.intershuffle_valid or allow_intershuffle_invalid):
+            return self
+
         if self.rank < 0:
             return self
         if random_degree is None:
@@ -656,6 +659,10 @@ class TableObject(object):
             candidates = [c for c in self.every if c.rank >= 0]
         else:
             assert all([c.rank >= 0 for c in candidates])
+
+        if not allow_intershuffle_invalid:
+            candidates = [c for c in candidates if c.intershuffle_valid]
+
         candidates = sorted(set(candidates),
                             key=lambda c: (c.rank, c.signature, c.index))
 
