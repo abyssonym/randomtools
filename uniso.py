@@ -5,7 +5,7 @@ def remove_sector_metadata(sourcefile, outfile):
     # playstation discs are CD-ROM XA mode 2 (form 1 for data)
     # form 2 sectors also exist on many discs, so this is a huge hack,
     # but I am treating every sector as form 1 for now.
-    print "REMOVING SECTOR METADATA"
+    print("REMOVING SECTOR METADATA")
     g = open(outfile, "w+")
     g.close()
     f = open(sourcefile, 'r+b')
@@ -31,7 +31,7 @@ def remove_sector_metadata(sourcefile, outfile):
 
 
 def inject_logical_sectors(sourcefile, outfile, debug=False):
-    print "REINJECTING LOGICAL SECTORS TO ORIGINAL ISO"
+    print("REINJECTING LOGICAL SECTORS TO ORIGINAL ISO")
     f = open(sourcefile, 'r+b')
     g = open(outfile, 'r+b')
     minpointer, maxpointer = None, None
@@ -64,10 +64,10 @@ def inject_logical_sectors(sourcefile, outfile, debug=False):
         else:
             is_form2 = ord(subheader[2]) & 0x20
             if is_form2:
-                print ("WARNING: "
-                    "A form 2 sector was modified. This software does not "
-                    "accurately read from and write to form 2 sectors, which "
-                    "are typically used for audio and video data.")
+                print("WARNING: "
+                      "A form 2 sector was modified. This software does not "
+                      "accurately read from and write to form 2 sectors, "
+                      "which are typically used for audio and video data.")
             if debug:
                 edc, ecc = get_edc_ecc(header + subheader + data_dest)
                 assert edc == error_detect
@@ -89,10 +89,10 @@ def inject_logical_sectors(sourcefile, outfile, debug=False):
                    len(data_source) + len(edc + ecc))
 
     if minpointer is not None and maxpointer is not None:
-        print "%s SECTORS CHANGED IN RANGE %x-%x" % (
-            num_changed_sectors, minpointer, maxpointer)
+        print("%s SECTORS CHANGED IN RANGE %x-%x" % (
+            num_changed_sectors, minpointer, maxpointer))
     else:
-        print "NO CHANGES MADE TO ISO"
+        print("NO CHANGES MADE TO ISO")
 
 
 if __name__ == "__main__":

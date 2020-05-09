@@ -1,5 +1,5 @@
-from utils import (read_multi, write_multi, classproperty,
-                   random, md5hash, cached_property)
+from .utils import (read_multi, write_multi, classproperty,
+                    random, md5hash, cached_property)
 from functools import total_ordering
 from os import path
 from hashlib import md5
@@ -87,15 +87,15 @@ def determine_global_table(outfile):
     if h in tablefiles:
         label, filename = tablefiles[h]
     else:
-        print "Unrecognized rom file: %s" % h
+        print("Unrecognized rom file: %s" % h)
         for i, label in enumerate(sorted(labelfiles)):
-            print "%s. %s" % ((i+1), label)
+            print("%s. %s" % ((i+1), label))
         if len(labelfiles) > 1:
-            selection = int(raw_input("Choose 1-%s: " % len(labelfiles)))
+            selection = int(input("Choose 1-%s: " % len(labelfiles)))
             label = sorted(labelfiles.keys())[selection-1]
             filename = labelfiles[label]
         else:
-            raw_input("Using this rom information. Okay? ")
+            input("Using this rom information. Okay? ")
             label = sorted(labelfiles.keys())[0]
             filename = labelfiles[label]
     GLOBAL_LABEL = label
@@ -181,14 +181,13 @@ def select_patches():
     if not OPTION_FILENAMES:
         return
 
-    print
-    print "The following optional patches are available."
+    print("\nThe following optional patches are available.")
     for i, patchfilename in enumerate(OPTION_FILENAMES):
-        print "%s: %s" % (i+1, patchfilename.split('.')[0])
-    print
-    s = raw_input("Select which patches to use, separated by a space."
-                  "\n(0 for none, blank for all): ")
-    print
+        print("%s: %s" % (i+1, patchfilename.split('.')[0]))
+    print()
+    s = input("Select which patches to use, separated by a space."
+              "\n(0 for none, blank for all): ")
+    print()
     s = s.strip()
     if not s:
         return
@@ -273,7 +272,7 @@ def write_patches(outfile):
     if not PATCH_FILENAMES:
         return
 
-    print "Writing patches..."
+    print("Writing patches...")
     for patchfilename in PATCH_FILENAMES:
         write_patch(outfile, patchfilename)
 
@@ -282,7 +281,7 @@ def verify_patches(outfile):
     if not PATCH_FILENAMES:
         return
 
-    print "Verifying patches..."
+    print("Verifying patches...")
     f = get_open_file(outfile)
     for patchfilename in PATCH_FILENAMES:
         if patchfilename in NOVERIFY_PATCHES:
@@ -363,7 +362,7 @@ def mutate_normal(base, minimum, maximum, random_degree=None,
         subwidth = maxwidth
     else:
         width_factor = 1.0
-        for _ in xrange(7):
+        for _ in range(7):
             width_factor *= random.uniform(random_degree, width_factor)
         subwidth = (minwidth * (1-width_factor)) + (maxwidth * width_factor)
     if factor > 0.5:
@@ -371,7 +370,7 @@ def mutate_normal(base, minimum, maximum, random_degree=None,
         modifier = subwidth * subfactor
         value = baseval + modifier
     else:
-        subfactor = 1- (factor * 2)
+        subfactor = 1 - (factor * 2)
         modifier = subwidth * subfactor
         value = baseval - modifier
     value += minimum
@@ -400,10 +399,10 @@ def shuffle_normal(candidates, random_degree=None, wide=False):
         new_indexes[c] = new_index
     if candidates and hasattr(candidates[0], "index"):
         shuffled = sorted(candidates,
-            key=lambda c: (new_indexes[c], c.signature, c.index))
+                          key=lambda c: (new_indexes[c], c.signature, c.index))
     else:
         shuffled = sorted(candidates,
-            key=lambda c: (new_indexes[c], random.random(), c))
+                          key=lambda c: (new_indexes[c], random.random(), c))
     return shuffled
 
 
@@ -420,7 +419,7 @@ class TableSpecs:
         self.pointed = pointed
         self.pointedpoint1 = False
         self.delimit = delimit
-        self.pointerfilename=pointerfilename
+        self.pointerfilename = pointerfilename
         for line in open(specfile):
             line = line.strip()
             if not line or line[0] == "#":
@@ -711,7 +710,7 @@ class TableObject(object):
     def get(cls, index):
         if isinstance(index, int):
             return GRAND_OBJECT_DICT[cls, index]
-        elif isinstance(index, str) or isinstance(index, unicode):
+        elif isinstance(index, str):
             objs = [o for o in cls.every if index in o.name]
             if len(objs) == 1:
                 return objs[0]
@@ -912,7 +911,7 @@ class TableObject(object):
                 else:
                     number, numbytes = size, 1
                 value = []
-                for i in xrange(number):
+                for i in range(number):
                     value.append(read_multi(f, numbytes))
             self.old_data[name] = copy(value)
             setattr(self, name, value)
@@ -1002,7 +1001,7 @@ class TableObject(object):
                 for o in objs:
                     pointer = o.write_data(filename, pointer)
                 f.seek(pointer)
-                f.write(chr(cls.specsdelimitval))
+                f.write(bytes([cls.specsdelimitval]))
                 pointer += 1
             if pointer == cls.specspointedpointer:
                 raise Exception("No objects in pointdelimit data.")
@@ -1018,8 +1017,10 @@ class TableObject(object):
             pointer = cls.specspointer
             size = cls.specspointedsize
             f = get_open_file(filename)
-            first_pointer = min([o.pointer for o in cls.every if o is not None])
-            pointedpointer = max(first_pointer, pointer + (cls.specscount * size))
+            first_pointer = min(
+                [o.pointer for o in cls.every if o is not None])
+            pointedpointer = max(
+                first_pointer, pointer + (cls.specscount * size))
             mask = (2 ** (8*size)) - 1
             for i in range(cls.specscount):
                 #masked = pointedpointer & mask
@@ -1078,12 +1079,12 @@ class TableObject(object):
     def signature(self):
         s = "%s%s%s" % (
             get_seed(), self.index, self.__class__.__name__)
-        return md5(s).hexdigest()
+        return md5(s.encode('ascii')).hexdigest()
 
     def reseed(self, salt=""):
         s = "%s%s%s%s" % (
             get_seed(), self.index, salt, self.__class__.__name__)
-        value = int(md5(s).hexdigest(), 0x10)
+        value = int(md5(s.encode('ascii')).hexdigest(), 0x10)
         random.seed(value)
 
     @classmethod
@@ -1197,7 +1198,7 @@ class TableObject(object):
         self.reseed(salt="magmutbit")
         for attributes in sorted(self.magic_mutate_bit_attributes):
             masks = self.magic_mutate_bit_attributes[attributes]
-            if isinstance(attributes, basestring):
+            if isinstance(attributes, str):
                 del(self.magic_mutate_bit_attributes[attributes])
                 attributes = tuple([attributes])
             if masks is None:
@@ -1217,10 +1218,10 @@ class TableObject(object):
             def obj_to_dict(o):
                 return dict([(a, getattr(o, a)) for a in attributes])
 
-            wildcard = [random.randint(0, m<<1) & m for m in masks]
+            wildcard = [random.randint(0, m << 1) & m for m in masks]
             wildcard = []
             for attribute, mask in bitmasks.items():
-                value = random.randint(0, mask<<1) & mask
+                value = random.randint(0, mask << 1) & mask
                 while True:
                     if not value:
                         break
@@ -1345,12 +1346,12 @@ class TableObject(object):
                 shuffled = list(candidates)
                 random.shuffle(shuffled)
             else:
-                candidates = sorted(candidates,
-                    key=lambda c: (c.rank, c.signature, c.index))
+                candidates = sorted(
+                    candidates, key=lambda c: (c.rank, c.signature, c.index))
                 shuffled = shuffle_normal(candidates,
                                           random_degree=random_degree)
 
-            if isinstance(attributes, str) or isinstance(attributes, unicode):
+            if isinstance(attributes, str):
                 attributes = [attributes]
 
             for attribute in attributes:
@@ -1382,7 +1383,7 @@ class TableObject(object):
                     o2 = random.choice(candidates)
                 else:
                     o2 = o.get_similar(candidates)
-                if isinstance(attributes, basestring):
+                if isinstance(attributes, str):
                     attributes = [attributes]
                 for attribute in attributes:
                     setattr(o, attribute, o2.old_data[attribute])
@@ -1433,7 +1434,7 @@ def get_table_objects(objtype, filename=None):
         if p is None:
             p = pointer
         accumulated_size = 0
-        for i in xrange(n):
+        for i in range(n):
             obj = objtype(filename, p, index=len(objects),
                           groupindex=groupindex)
             objects.append(obj)
@@ -1515,7 +1516,7 @@ def get_table_objects(objtype, filename=None):
             counter += 1
     elif delimit:
         f = get_open_file(filename)
-        for counter in xrange(number):
+        for counter in range(number):
             while True:
                 f.seek(pointer)
                 peek = ord(f.read(1))
@@ -1577,7 +1578,8 @@ def set_table_specs(filename=None):
             pointed = True if organization.lower() == "pointed" else False
             point1 = True if organization.lower() == "point1" else False
             delimit = True if organization.lower() == "delimit" else False
-            pointdelimit = True if organization.lower() == "pointdelimit" else False
+            pointdelimit = (True if organization.lower() == "pointdelimit"
+                            else False)
             pointed = pointed or point1 or pointdelimit
             delimit = delimit or pointdelimit
             if pointed:
@@ -1601,7 +1603,7 @@ def set_table_specs(filename=None):
                 objname, tablefilename, pointerfilename = tuple(line)
             else:
                 objname, tablefilename, pointer, count = tuple(line)
-        if pointer is not None and isinstance(pointer, basestring):
+        if pointer is not None and isinstance(pointer, str):
             if ',' in pointer:
                 pointers = map(lambda p: int(p, 0x10), pointer.split(','))
                 pointer = pointers[0]

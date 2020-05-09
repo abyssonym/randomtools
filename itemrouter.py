@@ -4,7 +4,10 @@ from itertools import product
 from sys import stdout
 from hashlib import md5
 
-class ItemRouterException(Exception): pass
+
+class ItemRouterException(Exception):
+    pass
+
 
 class ItemRouter:
     def __init__(self, requirefile, restrictfile=None, linearity=0.8):
@@ -209,7 +212,7 @@ class ItemRouter:
                 newsubreqs = set([])
                 for p in permutation:
                     newsubreqs |= p
-                assert all([isinstance(n, basestring) for n in newsubreqs])
+                assert all([isinstance(n, str) for n in newsubreqs])
                 requirements.add(frozenset(newsubreqs))
 
         if None in requirements and requirements == {None}:
@@ -276,7 +279,7 @@ class ItemRouter:
         return None
 
     def get_item_unlocked_locations(self, items):
-        if isinstance(items, basestring):
+        if isinstance(items, str):
             items = [items]
         baseline_locations = self.assignable_locations
         for item in items:
@@ -342,22 +345,22 @@ class ItemRouter:
     def force_custom(self):
         for l, item in self.custom_assignments.items():
             if l in self.assignments and self.assignments[l] != item:
-                print ("WARNING: Custom item assignment %s may be a softlock."
-                       % (l, item))
+                print("WARNING: Custom item assignment %s may be a softlock."
+                      % (l, item))
             self.assignments[l] = item
 
     def try_filter_no_custom_locations(self, items):
         temp = [i for i in items if i not in self.custom_assignments.keys()]
         if temp:
             return temp
-        print "WARNING: Forced to use custom item location."
+        print("WARNING: Forced to use custom item location.")
         return items
 
     def try_filter_no_custom_items(self, items):
         temp = [i for i in items if i not in self.custom_assignments.values()]
         if temp:
             return temp
-        print "WARNING: Forced to use custom item."
+        print("WARNING: Forced to use custom item.")
         return items
 
     def assign_item_location(self, item, location):
@@ -422,7 +425,7 @@ class ItemRouter:
         locations = set(locations) & set(self.assignable_locations)
         for l in locations:
             item = self.custom_assignments[l]
-            print "Assigning custom item: %s to %s" % (item, l)
+            print("Assigning custom item: %s to %s" % (item, l))
             self.assign_item_location(item, l)
         if locations:
             return True
@@ -549,7 +552,7 @@ class ItemRouter:
         for label in sorted(self.assign_conditions):
             self.get_simplified_requirements(label)
         stdout.write("\n")
-        for i in xrange(1000):
+        for i in range(1000):
             stdout.write("Loop %s: " % (i+1))
             break_flag = True
             if i % 2:
@@ -577,11 +580,11 @@ class ItemRouter:
                 if label in self.definitions:
                     self.definitions.remove(label)
 
-        print "Done analyzing."
+        print("Done analyzing.")
 
     def assign_everything(self):
         self.prep_requirements()
-        print "Assigning items to locations."
+        print("Assigning items to locations.")
         random.seed(self.routeseed)
         if not hasattr(self, "custom_assignments"):
             self.custom_assignments = {}
@@ -592,7 +595,7 @@ class ItemRouter:
             self.goal_requirements = None
 
         maxloops = len(self.assign_conditions)*5
-        for i in xrange(maxloops):
+        for i in range(maxloops):
             if self.check_custom():
                 continue
             if not self.unreachable_locations:
@@ -605,10 +608,10 @@ class ItemRouter:
                 success = self.try_unlock_locations()
             if not success:
                 if self.custom_assignments:
-                    print "Starting over. Attempt %s/%s" % (i+1, maxloops)
+                    print("Starting over. Attempt %s/%s" % (i+1, maxloops))
                 self.clear_assignments()
         else:
             raise ItemRouterException("Could not complete route.")
 
         self.force_custom()
-        #print self.report
+        #print(self.report)

@@ -86,8 +86,8 @@ def write_data_to_sectors(imgname, initial_sector, datafile="_temp.bin"):
         f.seek(pointer+0x12)
         old_submode = ord(f.read(1))
         if submode & 0x7E != old_submode & 0x7E:
-            print "WARNING! Submode differs on sector %s: %x -> %x" % (
-                sector_index, old_submode, submode)
+            print("WARNING! Submode differs on sector %s: %x -> %x" % (
+                sector_index, old_submode, submode))
         f.seek(pointer+0x12)
         f.write(chr(submode))
         f.seek(pointer+0x16)
@@ -188,7 +188,6 @@ class FileManager(object):
         for f in self.flat_files:
             if f.__repr__() == self_path:
                 continue
-            #print f, hex(f.start_sector), hex(f.end_sector), hex(f.filesize)
             try:
                 if f.start_sector <= new_target_sector:
                     assert f.end_sector <= new_target_sector
@@ -204,7 +203,8 @@ class FileManager(object):
             old_file.imgname, old_file.target_sector, datafile=filepath)
 
 
-class FileEntryReadException(Exception): pass
+class FileEntryReadException(Exception):
+    pass
 
 
 class FileEntry:
@@ -317,7 +317,7 @@ class FileEntry:
             f = file_from_sectors(self.imgname, self.target_sector, filepath)
             f.close()
         except AssertionError:
-            print "EXCEPTION: %s" % filepath
+            print("EXCEPTION: %s" % filepath)
             return
 
 
@@ -341,7 +341,6 @@ def read_directory(imgname, dirname, sector_index=None,
     while True:
         try:
             fe = FileEntry(imgname, pointer, dirname, sector_index)
-            #print fe
             pointer = fe.pointer + fe.size
             fes.append(fe)
         except FileEntryReadException:
@@ -353,7 +352,6 @@ def read_directory(imgname, dirname, sector_index=None,
         fe.files = None
         if not fe.printable_name:
             continue
-        #print fe
         if fe.is_directory and fe.name and sector_index != fe.target_sector:
             subfes = read_directory(
                 imgname, path.join(dirname, fe.name),
@@ -379,11 +377,4 @@ if __name__ == "__main__":
     filename = None
 
     f = FileManager(outfile, dirname, minute, second, sector)
-    #print f.flat_files
-    #print f.flat_directories
-    #f.export_file("D/F0016.BIN;1")
-    #f.export_file("ZZZ.BIN;1")
-    #f.import_file("ZZZ.BIN;1", "ZZZ.BIN;1")
-    #f.import_file("D/F0016.BIN;1", new_target_sector=95406)
-    #f.import_file("D/F0016.BIN;1")
     f.write_all()

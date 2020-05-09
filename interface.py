@@ -80,7 +80,7 @@ def snescopy(sourcefile, outfile):
     if size % 0x400 == 0:
         copyfile(sourcefile, outfile)
     elif size % 0x200 == 0:
-        print "SNES header detected. Removing header from output file."
+        print("SNES header detected. Removing header from output file.")
         f = open(sourcefile, 'r+b')
         data = f.read()
         f.close()
@@ -112,10 +112,10 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
         random_degree = 0.5
 
     if sourcefile is None:
-        sourcefile = raw_input("Rom filename? ")
+        sourcefile = input("Rom filename? ")
 
     if seed is None and num_args < 2:
-        seed = raw_input("Seed? (blank for random) ").strip()
+        seed = input("Seed? (blank for random) ").strip()
 
     if seed is None or seed == "":
         seed = time()
@@ -139,13 +139,13 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
     user_input_flags = flags
     if allflags:
         if flags is None and num_args < 2:
-            print
-            print "Please input the flags for the things you want to randomize."
+            print("\nPlease input the flags for "
+                  "the things you want to randomize.")
             for o in flagobjects:
-                print "    %s  Randomize %s." % (o.flag,
-                                                 o.flag_description.lower())
-            print
-            flags = raw_input("Flags? (blank for all) ").strip()
+                print("    %s  Randomize %s." % (o.flag,
+                                                 o.flag_description.lower()))
+            print()
+            flags = input("Flags? (blank for all) ").strip()
             user_input_flags = flags
         elif flags is None:
             flags = allflags
@@ -153,7 +153,7 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
     if flags:
         flags = flags.lower()
         for code, code_options in sorted(codes.items()):
-            if isinstance(code_options, basestring):
+            if isinstance(code_options, str):
                 code_options = [code_options]
             for co in code_options:
                 co = co.lower()
@@ -185,7 +185,7 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
             snescopy(sourcefile, outfile)
         else:
             copyfile(sourcefile, outfile)
-    except (OSError, IOError), e:
+    except (OSError, IOError) as e:
         if e.strerror == "No such file or directory":
             e.strerror = ('%s; Did you include the filename extension? For '
                           'example, ".smc", ".sfc", or ".img". ' % e.strerror)
@@ -197,21 +197,21 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
     custom_degree = custom_degree or random_degree is not None
     if custom_degree:
         custom_split = False
-        for o in sorted(objects):
+        for o in sorted(objects, key=lambda ob: str(ob)):
             if hasattr(o, "custom_random_enable") and o.custom_random_enable:
                 custom_split = True
                 break
 
         if random_degree is None:
             if custom_split:
-                print ("\nIf you would like even more control over the "
-                       "randomness, type \"custom\" here.")
-            random_degree = raw_input("Randomness? (default: 0.5) ").strip()
+                print("\nIf you would like even more control over the "
+                      "randomness, type \"custom\" here.")
+            random_degree = input("Randomness? (default: 0.5) ").strip()
             if not random_degree:
                 random_degree = 0.5
 
-        if custom_split and (isinstance(random_degree, basestring) and
-                "custom" in random_degree.strip().lower()):
+        if custom_split and (isinstance(random_degree, str) and
+                             "custom" in random_degree.strip().lower()):
             custom_dict = defaultdict(set)
             for o in sorted(objects):
                 if (hasattr(o, "custom_random_enable")
@@ -224,7 +224,7 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
             for k in sorted(custom_dict):
                 os = sorted(custom_dict[k], key=lambda o: o.__name__)
                 onames = ", ".join([o.__name__ for o in os])
-                s = raw_input("Randomness for %s? " % onames).strip()
+                s = input("Randomness for %s? " % onames).strip()
                 if not s:
                     continue
                 for o in os:
@@ -233,8 +233,8 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
                     crd = min(1.0, max(0.0, crd))
                     o.custom_random_degree = crd ** 2
 
-            random_degree = raw_input("Randomness for everything"
-                                      " unspecified? ").strip()
+            random_degree = input("Randomness for everything"
+                                  " unspecified? ").strip()
             if not random_degree:
                 random_degree = 0.5
 
@@ -246,25 +246,24 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
     if num_args < 3:
         select_patches()
 
-    print
+    print()
     if flags == allflags:
-        flags = string.lowercase
-        print ("Randomizing %s with all flags using seed %s"
-               % (sourcefile, seed)),
+        flags = string.ascii_lowercase
+        print("Randomizing %s with all flags using seed %s"
+              % (sourcefile, seed), end=' ')
     else:
         flags = flags.lower()
-        print ("Randomizing %s with flags '%s' using seed %s"
-               % (sourcefile, flags, seed)),
+        print("Randomizing %s with flags '%s' using seed %s"
+              % (sourcefile, flags, seed), end=' ')
     if custom_degree:
-        print "and randomness %s" % random_degree
-    print "now."
-    print
+        print("and randomness %s" % random_degree, end=' ')
+    print("now.\n")
 
     if user_input_flags is None:
         user_input_flags = flags
 
     write_patches(outfile)
-    print "Loading and ranking game objects..."
+    print("Loading and ranking game objects...")
     objects = sort_good_order(objects)
     for o in objects:
         o.every
@@ -273,7 +272,7 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
 
     for o in objects:
         if hasattr(o, "flag_description") and o.flag in flags:
-            print "Randomizing %s." % o.flag_description.lower()
+            print("Randomizing %s." % o.flag_description.lower())
         if not hasattr(o, "flag") or o.flag in flags:
             o.class_reseed('full_randomize')
             o.full_randomize()
@@ -291,11 +290,11 @@ def clean_and_write(objects):
 
     for o in objects:
         if hasattr(o, "flag_description") and o.flag in get_flags():
-            print "Cleaning %s." % o.flag_description.lower()
+            print("Cleaning %s." % o.flag_description.lower())
         o.class_reseed('cleanup')
         o.full_cleanup()
 
-    print "Saving game objects..."
+    print("Saving game objects...")
     for o in objects:
         o.write_all(outfile)
 
@@ -303,10 +302,10 @@ def clean_and_write(objects):
 
 
 def finish_interface():
-    print
-    print "Randomization completed successfully."
-    print "Output filename: %s" % outfile
-    print "MD5 hash: %s" % md5hash(outfile)
-    print
+    print()
+    print("Randomization completed successfully.")
+    print("Output filename: %s" % outfile)
+    print("MD5 hash: %s" % md5hash(outfile))
+    print()
     if len(argv) < 2:
-        raw_input("Press Enter to close this program. ")
+        input("Press Enter to close this program. ")

@@ -23,10 +23,10 @@ def encode_L2_P(data):
     target_size = P_index + L2_P
     data = map(ord, data) + ([None] * (target_size-len(data)))
     assert len(data) == target_size
-    for j in xrange(43):
+    for j in range(43):
         a, b = 0, 0
         index = base_index
-        for i in xrange(19, 43):
+        for i in range(19, 43):
             assert index < P_index-1
             a ^= L2sq[i][data[index]]
             b ^= L2sq[i][data[index+1]]
@@ -50,10 +50,10 @@ def encode_L2_Q(data):
     data = data + ([None] * (target_size-len(data)))
     assert len(data) == target_size
     counter = 0
-    for j in xrange(26):
+    for j in range(26):
         a, b = 0, 0
         index = base_index
-        for i in xrange(43):
+        for i in range(43):
             a ^= L2sq[i][data[index]]
             b ^= L2sq[i][data[index+1]]
             index += (2*44)
@@ -72,7 +72,7 @@ def encode_L2_Q(data):
 def get_edc_ecc(data):
     assert len(data) == 0x818
     edc = crc32(data[0x10:0x818])
-    for _ in xrange(4):
+    for _ in range(4):
         data += chr(edc & 0xFF)
         edc >>= 8
     assert len(data) == 0x81c
@@ -87,7 +87,7 @@ def get_edc_ecc(data):
 def get_edc_form2(data):
     assert len(data) == 0x91C
     edc = crc32(data)
-    for _ in xrange(4):
+    for _ in range(4):
         data += chr(edc & 0xFF)
         edc >>= 8
     assert len(data) == 0x920

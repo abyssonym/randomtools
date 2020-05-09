@@ -41,7 +41,7 @@ def int2bytes(value, length=2, reverse=True):
 
 
 def read_multi(f, length=2, reverse=True):
-    vals = map(ord, f.read(length))
+    vals = list(map(int, f.read(length)))
     if reverse:
         vals = list(reversed(vals))
     value = 0
@@ -65,12 +65,13 @@ def write_multi(f, value, length=2, reverse=True):
     if not reverse:
         vals = reversed(vals)
 
-    f.write(''.join(map(chr, vals)))
+    f.write(bytes(vals))
 
 
 utilrandom = random.Random()
 utran = utilrandom
 random = utilrandom
+
 
 def line_wrap(things, width=16):
     newthings = []
@@ -154,12 +155,12 @@ def get_snes_palette_transformer(use_luma=False, always=None, middle=True,
         g = lambda w: w
         h = lambda w: w
         if swapcode & 1:
-            f = lambda (x, y, z): (y, x, z)
+            f = lambda x, y, z: (y, x, z)
         if swapcode & 2:
-            g = lambda (x, y, z): (z, y, x)
+            g = lambda x, y, z: (z, y, x)
         if swapcode & 4:
-            h = lambda (x, y, z): (x, z, y)
-        swapfunc = lambda w: f(g(h(w)))
+            h = lambda x, y, z: (x, z, y)
+        swapfunc = lambda w: f(*g(*h(*w)))
 
         return swapfunc
 
@@ -205,7 +206,8 @@ def get_snes_palette_transformer(use_luma=False, always=None, middle=True,
         red = color & 0x001f
         return (red, green, blue)
 
-    def components_to_color((red, green, blue)):
+    def components_to_color(components):
+        red, green, blue = components
         return red | (green << 5) | (blue << 10)
 
     if always is not None and basepalette is not None:
@@ -331,13 +333,10 @@ def get_snes_palette_transformer(use_luma=False, always=None, middle=True,
         for cluster in clusters:
             swapcode = random.randint(0, 7)
             for index in cluster:
-                try:
-                    assert index not in swapmap
-                except:
-                    import pdb; pdb.set_trace()
+                assert index not in swapmap
                 swapmap[index] = swapcode
 
-        remaining = [i for i in xrange(94) if i not in swapmap.keys()]
+        remaining = [i for i in range(94) if i not in swapmap.keys()]
         random.shuffle(remaining)
 
         def get_nearest_swapcode(index):
@@ -401,14 +400,14 @@ def rewrite_snes_title(text, filename, version, lorom=False):
     else:
         mask = 0xFFFF
     f.seek(0xFFC0 & mask)
-    f.write(text)
+    f.write(bytes(text.encode('ascii')))
     f.seek(0xFFDB & mask)
-    f.write(chr(int(version)))
+    f.write(bytes([int(version)]))
     f.close()
 
 
 def checksum_calc_sum(data, length):
-    return sum(map(ord, data[:length]))
+    return sum(map(int, data[:length]))
 
 
 def checksum_mirror_sum(data, length, actual_size, mask=0x80000000):
@@ -431,7 +430,7 @@ def rewrite_snes_checksum(filename, lorom=False):
     f.seek(0, 2)
     actual_size = f.tell()
     if actual_size & (0x1FFFF):
-        print "WARNING: The rom is a strange size."
+        print("WARNING: The rom is a strange size.")
 
     if lorom:
         rommask = 0x7FFF
@@ -443,7 +442,7 @@ def rewrite_snes_checksum(filename, lorom=False):
     f.seek(0xFFD7 & rommask)
     previous_header_size = ord(f.read(1))
     if previous_header_size != expected_header_size:
-        print "WARNING: Game rom reports incorrect size. Fixing."
+        print("WARNING: Game rom reports incorrect size. Fixing.")
         f.seek(0xFFD7 & rommask)
         f.write(chr(expected_header_size))
 
