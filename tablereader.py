@@ -472,6 +472,9 @@ class TableObject(object):
         assert key not in GRAND_OBJECT_DICT
         GRAND_OBJECT_DICT[key] = self
 
+    def __hash__(self):
+        return hash(self.signature)
+
     def __eq__(self, other):
         if type(self) is type(other):
             return self.index == other.index
