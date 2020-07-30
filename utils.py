@@ -444,7 +444,7 @@ def rewrite_snes_checksum(filename, lorom=False):
     if previous_header_size != expected_header_size:
         print("WARNING: Game rom reports incorrect size. Fixing.")
         f.seek(0xFFD7 & rommask)
-        f.write(chr(expected_header_size))
+        f.write(expected_header_size.to_bytes(1, byteorder='little'))
 
     f.seek(0, 0)
     data = f.read()

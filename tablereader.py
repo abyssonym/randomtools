@@ -169,8 +169,7 @@ def patch_filename_to_bytecode(patchfilename):
                                     (address, code))
                 code = code.replace(name, "%x" % jump)
 
-        code = map(lambda s: chr(int(s, 0x10)), code.split())
-        code = ''.join(code)
+        code = bytearray(map(lambda s: int(s, 0x10), code.split()))
         patch[address] = code
 
     f.close()
