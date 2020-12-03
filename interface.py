@@ -112,7 +112,13 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
         random_degree = 0.5
 
     if sourcefile is None:
+        print('TIP: Try dragging-and-dropping the rom file '
+              'instead of typing the filename manually!')
         sourcefile = input("Rom filename? ")
+        if sourcefile.startswith('"') and sourcefile.endswith('"'):
+            print('NOTICE: Automatically removing '
+                  'extraneous quotation marks.')
+            sourcefile = sourcefile.strip('"')
 
     if seed is None and num_args < 2:
         seed = input("Seed? (blank for random) ").strip()
