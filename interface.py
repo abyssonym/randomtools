@@ -213,7 +213,7 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
         if custom_split and (isinstance(random_degree, str) and
                              "custom" in random_degree.strip().lower()):
             custom_dict = defaultdict(set)
-            for o in sorted(objects):
+            for o in sorted(objects, key=lambda o: str(o)):
                 if (hasattr(o, "custom_random_enable")
                         and o.custom_random_enable):
                     if o.custom_random_enable is True:
