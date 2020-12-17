@@ -1186,6 +1186,7 @@ class TableObject(object):
 
                 for ma in mutatt:
                     if ma < minimum or ma > maximum:
+                        newatt.append(ma)
                         continue
                     ma = mutate_normal(ma, minimum, maximum,
                                        random_degree=self.random_degree)
