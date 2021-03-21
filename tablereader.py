@@ -13,6 +13,8 @@ try:
     tblpath = path.join(_MEIPASS, "tables")
 except ImportError:
     tblpath = "tables"
+head = __file__.rsplit('randomtools', 1)[0]
+tblpath = path.join(head, tblpath)
 
 addresses = lambda: None
 

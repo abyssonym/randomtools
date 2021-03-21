@@ -1,4 +1,4 @@
-from randomtools.utils import cached_property, utilrandom as random
+from .utils import cached_property, utilrandom as random
 from collections import defaultdict
 from itertools import product
 from sys import stdout

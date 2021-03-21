@@ -5,11 +5,11 @@ from time import time
 from shutil import copyfile
 from collections import defaultdict
 
-from randomtools.tablereader import (
+from .tablereader import (
     determine_global_table, sort_good_order, set_table_specs,
     set_global_output_filename, select_patches, write_patches, verify_patches,
     get_random_degree, set_random_degree, set_seed, get_seed, close_file)
-from randomtools.utils import (
+from .utils import (
     utilrandom as random, rewrite_snes_title, rewrite_snes_checksum,
     md5hash)
 
