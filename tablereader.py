@@ -135,7 +135,7 @@ def patch_filename_to_bytecode(patchfilename):
             labels[name] = address
             continue
 
-        for name in definitions:
+        for name in sorted(definitions, key=lambda d: (-len(d), d)):
             if name in line:
                 line = line.replace(name, definitions[name])
 
@@ -160,7 +160,7 @@ def patch_filename_to_bytecode(patchfilename):
 
     for address in sorted(patch):
         code = patch[address]
-        for name in labels:
+        for name in sorted(labels, key=lambda l: (-len(l), l)):
             if name in code:
                 target_address = labels[name]
                 jump = target_address - (address + 2)
@@ -209,7 +209,7 @@ def write_patch(outfile, patchfilename, noverify=False):
     magic_word = pf.read(5)
     pf.close()
     f = get_open_file(outfile)
-    if magic_word == "\xff\xbcCMP":
+    if magic_word == b"\xff\xbcCMP":
         CMP_PATCH_FILENAMES.append(patchfilename)
         return write_cmp_patch(f, patchpath)
 
@@ -223,12 +223,12 @@ def write_patch(outfile, patchfilename, noverify=False):
 
 
 def write_cmp_patch(outfile, patchfilename, verify=False):
-    from interface import get_sourcefile
+    from randomtools.interface import get_sourcefile
 
     sourcefile = open(get_sourcefile(), 'r+b')
     patchfile = open(patchfilename, 'r+b')
     magic_word = patchfile.read(5)
-    if magic_word != "\xFF\xBCCMP":
+    if magic_word != b"\xFF\xBCCMP":
         raise Exception("Not a CMP patch.")
     version = ord(patchfile.read(1))
     pointer_length = ord(patchfile.read(1))
@@ -237,10 +237,10 @@ def write_cmp_patch(outfile, patchfilename, verify=False):
         command = patchfile.read(1)
         if not command:
             break
-        if command == '\x00':
+        if command == b'\x00':
             address = read_multi(patchfile, length=pointer_length)
             outfile.seek(address)
-        elif command == '\x01':
+        elif command == b'\x01':
             chunksize = read_multi(patchfile, length=2)
             address = read_multi(patchfile, length=pointer_length)
             sourcefile.seek(address)
@@ -252,7 +252,7 @@ def write_cmp_patch(outfile, patchfilename, verify=False):
                 if s != s2:
                     raise Exception("Patch write conflict %s %x" % (
                         patchfilename, outfile.tell()-len(s2)))
-        elif command == '\x02':
+        elif command == b'\x02':
             chunksize = read_multi(patchfile, length=2)
             s = patchfile.read(chunksize)
             if not verify:
@@ -1029,7 +1029,8 @@ class TableObject(object):
             size = cls.specspointedsize
             f = get_open_file(filename)
             first_pointer = min(
-                [o.pointer for o in cls.every if o is not None])
+                [o.pointer for o in cls.every
+                 if o is not None and o.pointer is not None])
             pointedpointer = max(
                 first_pointer, pointer + (cls.specscount * size))
             mask = (2 ** (8*size)) - 1
@@ -1522,7 +1523,7 @@ def get_table_objects(objtype, filename=None):
             subpointer = read_multi(f, size) + objtype.specspointedpointer
             f.seek(pointer + size)
             subpointer2 = read_multi(f, size) + objtype.specspointedpointer
-            groupcount = (subpointer2 - subpointer) / objtype.total_size
+            groupcount = (subpointer2 - subpointer) // objtype.total_size
             if objtype.specspointedpoint1:
                 groupcount = 1
             add_objects(groupcount, groupindex=counter, p=subpointer)
