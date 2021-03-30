@@ -8,7 +8,7 @@ from cdrom_ecc_tables import EDC_crctable, L2sq
 def crc32(data):
     result = 0
     for value in data:
-        result = EDC_crctable[(result ^ ord(value)) & 0xFF] ^ (result >> 8)
+        result = EDC_crctable[(result ^ value) & 0xFF] ^ (result >> 8)
     return result
 
 
@@ -21,7 +21,7 @@ def encode_L2_P(data):
     base_index = 0
     P_index = 4 + L2_RAW + 4 + 8
     target_size = P_index + L2_P
-    data = map(ord, data) + ([None] * (target_size-len(data)))
+    data = list(data) + ([None] * (target_size-len(data)))
     assert len(data) == target_size
     for j in range(43):
         a, b = 0, 0
@@ -73,13 +73,13 @@ def get_edc_ecc(data):
     assert len(data) == 0x818
     edc = crc32(data[0x10:0x818])
     for _ in range(4):
-        data += chr(edc & 0xFF)
+        data += bytes([edc & 0xFF])
         edc >>= 8
     assert len(data) == 0x81c
     assert len(data)-12 == 0x810
-    temp = encode_L2_P("".join(map(chr, [0, 0, 0, 0])) + data[0x10:])
+    temp = encode_L2_P(bytes([0, 0, 0, 0]) + data[0x10:])
     temp = encode_L2_Q(temp)
-    data += "".join(map(chr, temp[-0x114:]))
+    data += bytes(temp[-0x114:])
     assert len(data) == 0x930
     return data[0x818:0x81c], data[0x81c:]
 
@@ -88,7 +88,7 @@ def get_edc_form2(data):
     assert len(data) == 0x91C
     edc = crc32(data)
     for _ in range(4):
-        data += chr(edc & 0xFF)
+        data += bytes([edc & 0xFF])
         edc >>= 8
     assert len(data) == 0x920
     return data[-4:]

@@ -6,11 +6,11 @@ from utils import read_multi, write_multi
 from cdrom_ecc import get_edc_ecc
 
 
-SYNC_PATTERN = "".join(map(chr, [0] + ([0xFF]*10) + [0]))
-fun = lambda x: chr(int(x, 0x10))
-DIRECTORY_PATTERN = "".join(map(fun,
+SYNC_PATTERN = bytes([0] + ([0xFF]*10) + [0])
+fun = lambda x: int(x, 0x10)
+DIRECTORY_PATTERN = bytes(map(fun,
     "00 00 00 00 8D 55 58 41 00 00 00 00 00 00".split()))
-FILE_PATTERN = "".join(map(fun,
+FILE_PATTERN = bytes(map(fun,
     #"2A 00 2A 00 08 01 58 41 00 00 00 00 00 00".split()))  # fft
     "00 00 00 00 0D 55 58 41 00 00 00 00 00 00".split()))
 
@@ -89,9 +89,9 @@ def write_data_to_sectors(imgname, initial_sector, datafile="_temp.bin"):
             print("WARNING! Submode differs on sector %s: %x -> %x" % (
                 sector_index, old_submode, submode))
         f.seek(pointer+0x12)
-        f.write(chr(submode))
+        f.write(bytes([submode]))
         f.seek(pointer+0x16)
-        f.write(chr(submode))
+        f.write(bytes([submode]))
         f.seek(pointer+0x18)
         f.write(block)
         f.seek(pointer)
@@ -159,6 +159,8 @@ class FileManager(object):
                 return f
 
     def export_file(self, name, filepath=None):
+        if not name.endswith(';1'):
+            name = name + ';1'
         if filepath is None:
             filepath = path.join(self.dirname, name)
         dirname = path.split(filepath)[0]
@@ -171,6 +173,8 @@ class FileManager(object):
         return filepath
 
     def import_file(self, name, filepath=None, new_target_sector=None):
+        if not name.endswith(';1'):
+            name = name + ';1'
         if filepath is None:
             filepath = path.join(self.dirname, name)
         old_file = self.get_file(name)
@@ -221,6 +225,7 @@ class FileEntry:
     @property
     def printable_name(self):
         #return any([c in printable for c in self.name])
+        #print(printable, self.name)
         return all([c in printable for c in self.name])
 
     @property
@@ -258,6 +263,7 @@ class FileEntry:
     def read_data(self):
         #f = open(self.imgname, 'r+b')
         f = file_from_sectors(self.imgname, self.initial_sector)
+        #print(self.pointer)
         f.seek(self.pointer)
         peek = f.read(1)
         if not peek:
@@ -290,7 +296,7 @@ class FileEntry:
         assert self.one == 1
         f.seek(2, 1)
         self.name_length = ord(f.read(1))
-        self.name = f.read(self.name_length)
+        self.name = f.read(self.name_length).decode('ascii')
         if not self.name_length % 2:
             p = ord(f.read(1))
             assert p == 0
@@ -308,6 +314,8 @@ class FileEntry:
             return
         if filepath is None:
             filepath = path.join(self.dirname, self.name)
+            assert filepath.endswith(';1')
+            filepath = filepath[:-2]
             try:
                 makedirs(self.dirname)
             except OSError:
@@ -329,6 +337,7 @@ def read_directory(imgname, dirname, sector_index=None,
     pointer = sector_index * 0x930
     f.seek(pointer)
     temp = f.read(12)
+    #print(hex(pointer), temp, SYNC_PATTERN)
     assert temp == SYNC_PATTERN
     f.seek(pointer+15)
     mode = ord(f.read(1))
@@ -344,7 +353,7 @@ def read_directory(imgname, dirname, sector_index=None,
             pointer = fe.pointer + fe.size
             fes.append(fe)
         except FileEntryReadException:
-            pointer = ((pointer / 0x800) + 1) * 0x800
+            pointer = ((pointer // 0x800) + 1) * 0x800
         except EOFError:
             break
 
