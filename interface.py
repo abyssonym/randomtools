@@ -8,7 +8,8 @@ from collections import defaultdict
 from .tablereader import (
     determine_global_table, sort_good_order, set_table_specs,
     set_global_output_filename, select_patches, write_patches, verify_patches,
-    get_random_degree, set_random_degree, set_seed, get_seed, close_file)
+    get_random_degree, set_random_degree, set_seed, get_seed, close_file,
+    reimport_psx_files)
 from .utils import (
     utilrandom as random, rewrite_snes_title, rewrite_snes_checksum,
     md5hash)
@@ -304,6 +305,7 @@ def clean_and_write(objects):
     for o in objects:
         o.write_all(outfile)
 
+    reimport_psx_files()
     verify_patches(outfile)
 
 

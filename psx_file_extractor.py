@@ -2,8 +2,8 @@ from sys import argv
 from os import makedirs, path, stat
 from string import printable
 from subprocess import call
-from utils import read_multi, write_multi
-from cdrom_ecc import get_edc_ecc
+from .utils import read_multi, write_multi
+from .cdrom_ecc import get_edc_ecc
 
 
 SYNC_PATTERN = bytes([0] + ([0xFF]*10) + [0])
@@ -147,6 +147,18 @@ class FileManager(object):
                     directories.append(f)
                     files.extend(new_files)
         return directories
+
+    @property
+    def report(self):
+        s = ''
+        for f in sorted(self.flat_files, key=lambda f2: (f2.initial_sector,
+                                                         f2.pointer)):
+            assert str(f).startswith(self.dirname)
+            filepath = str(f)[len(self.dirname):]
+            if filepath.endswith(';1'):
+                filepath = filepath[:-2]
+            s += '{0:0>8x} {1:0>4x} {2}\n'.format(f.target_sector * 0x930, f.pointer, filepath)
+        return s.strip()
 
     def write_all(self):
         for f in self.flat_files:
@@ -382,8 +394,9 @@ if __name__ == "__main__":
     dirname = "%s.root" % dirname
 
     outfile = "modified.%s" % filename
-    call(["cp", "-f", filename, outfile])
+    call(["cp", "-n", filename, outfile])
     filename = None
 
     f = FileManager(outfile, dirname, minute, second, sector)
-    f.write_all()
+    print(f.report)
+    #f.write_all()

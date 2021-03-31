@@ -19,6 +19,7 @@ tblpath = path.join(head, tblpath)
 addresses = lambda: None
 
 MASTER_FILENAME = "master.txt"
+SANDBOX_PATH = '_temp'
 TABLE_SPECS = {}
 GLOBAL_OUTPUT = None
 GLOBAL_TABLE = None
@@ -30,22 +31,42 @@ NOVERIFY_PATCHES = []
 CMP_PATCH_FILENAMES = []
 RANDOM_DEGREE = 0.25
 SEED = None
+PSX_FILE_MANAGER = None
 OPEN_FILES = {}
 
 
-def get_open_file(filename):
-    if filename in OPEN_FILES:
-        f = OPEN_FILES[filename]
+def get_open_file(filepath):
+    if filepath in OPEN_FILES:
+        f = OPEN_FILES[filepath]
         if not f.closed:
-            return OPEN_FILES[filename]
-    f = open(filename, "r+b")
-    OPEN_FILES[filename] = f
-    return get_open_file(filename)
+            return OPEN_FILES[filepath]
+    if filepath.startswith(SANDBOX_PATH):
+        name = filepath[len(SANDBOX_PATH):].lstrip(path.sep)
+        PSX_FILE_MANAGER.export_file(name, filepath)
+    f = open(filepath, "r+b")
+    OPEN_FILES[filepath] = f
+    return get_open_file(filepath)
 
 
-def close_file(filename):
-    if filename in OPEN_FILES:
-        OPEN_FILES[filename].close()
+def close_file(filepath):
+    if filepath in OPEN_FILES:
+        OPEN_FILES[filepath].close()
+
+
+def create_psx_file_manager(outfile):
+    global PSX_FILE_MANAGER
+    from .psx_file_extractor import FileManager
+    PSX_FILE_MANAGER = FileManager(outfile, SANDBOX_PATH)
+
+
+def reimport_psx_files():
+    if not SANDBOX_PATH:
+        return
+    for filepath in OPEN_FILES:
+        if filepath.startswith(SANDBOX_PATH):
+            name = filepath[len(SANDBOX_PATH):].lstrip(path.sep)
+            close_file(filepath)  # do before importing to flush the file
+            PSX_FILE_MANAGER.import_file(name, filepath)
 
 
 def get_global_label():
@@ -462,13 +483,18 @@ class TableObject(object):
         assert hasattr(self, "specs")
         assert isinstance(self.total_size, int)
         assert index is not None
-        self.filename = filename
+        if hasattr(self.specs, 'subfile'):
+            if PSX_FILE_MANAGER is None:
+                create_psx_file_manager(filename)
+            self.filename = path.join(SANDBOX_PATH, self.specs.subfile)
+        else:
+            self.filename = filename
         self.pointer = pointer
         self.groupindex = groupindex
         self.variable_size = size
         self.index = index
         if filename:
-            self.read_data(filename, pointer)
+            self.read_data(None, pointer)
         key = (type(self), self.index)
         assert key not in GRAND_OBJECT_DICT
         GRAND_OBJECT_DICT[key] = self
@@ -986,7 +1012,7 @@ class TableObject(object):
         if cls.specspointedpoint1 or not (
                 cls.specsgrouped or cls.specspointed or cls.specsdelimit):
             for o in cls.every:
-                o.write_data(filename)
+                o.write_data()
         elif cls.specsgrouped:
             pointer = cls.specspointer
             f = get_open_file(filename)
@@ -997,7 +1023,7 @@ class TableObject(object):
                     f.write(chr(len(objs)))
                     pointer += 1
                 for o in objs:
-                    pointer = o.write_data(filename, pointer)
+                    pointer = o.write_data(None, pointer)
         elif cls.specspointed and cls.specsdelimit:
             pointer = cls.specspointedpointer
             f = get_open_file(filename)
@@ -1010,7 +1036,7 @@ class TableObject(object):
                             length=cls.specspointedsize)
                 f.seek(pointer)
                 for o in objs:
-                    pointer = o.write_data(filename, pointer)
+                    pointer = o.write_data(None, pointer)
                 f.seek(pointer)
                 f.write(bytes([cls.specsdelimitval]))
                 pointer += 1
@@ -1041,7 +1067,7 @@ class TableObject(object):
                 if hasattr(cls, "groupsort"):
                     objs = cls.groupsort(objs)
                 for o in objs:
-                    pointedpointer = o.write_data(filename, pointedpointer)
+                    pointedpointer = o.write_data(None, pointedpointer)
                 f.seek(pointer + (i*size))
                 write_multi(f, masked, length=size)
         elif cls.specsdelimit:
@@ -1052,7 +1078,7 @@ class TableObject(object):
                 if hasattr(cls, "groupsort"):
                     objs = cls.groupsort(objs)
                 for o in objs:
-                    pointer = o.write_data(filename, pointer)
+                    pointer = o.write_data(None, pointer)
                 f.seek(pointer)
                 f.write(chr(cls.specsdelimitval))
                 pointer += 1
@@ -1591,6 +1617,7 @@ def set_table_specs(filename=None):
         groupednum = None
         pointerfilename = None
         pointer = None
+        subfile = None
         count = None
         syncpointers = False
         if len(line) >= 5:
@@ -1630,6 +1657,8 @@ def set_table_specs(filename=None):
             else:
                 objname, tablefilename, pointer, count = tuple(line)
         if pointer is not None and isinstance(pointer, str):
+            if '@' in pointer:
+                pointer, subfile = pointer.split('@')
             if ',' in pointer:
                 pointers = map(lambda p: int(p, 0x10), pointer.split(','))
                 pointer = pointers[0]
@@ -1652,3 +1681,5 @@ def set_table_specs(filename=None):
             TABLE_SPECS[objname].delimitval = delimitval
         if syncpointers:
             TABLE_SPECS[objname].syncpointers = pointers
+        if subfile:
+            TABLE_SPECS[objname].subfile = subfile

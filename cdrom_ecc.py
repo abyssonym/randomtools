@@ -1,4 +1,4 @@
-from cdrom_ecc_tables import EDC_crctable, L2sq
+from .cdrom_ecc_tables import EDC_crctable, L2sq
 
 # unused CRC polynomials
 #POLYNOMIAL = 0x04C11DB7  # standard
