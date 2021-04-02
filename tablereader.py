@@ -855,6 +855,31 @@ class TableObject(object):
         return desc
 
     @property
+    def pretty_description(self):
+        if hasattr(self, 'name'):
+            s = '{0} {1:0>3X} {2}\n'.format(self.__class__.__name__,
+                                            self.index, self.name)
+        else:
+            s = '{0} {1:0>3X}\n'.format(self.__class__.__name__, self.index)
+        for (attr, size, other) in self.specsattrs:
+            value = getattr(self, attr)
+            if isinstance(value, int):
+                s += ('  {0}: {1:0>%sx}\n' % (size*2)).format(attr, value)
+            elif isinstance(value, bytes):
+                s += '  {0}: {1}\n'.format(attr, value)
+            elif isinstance(value, list):
+                if isinstance(size, str) and 'x' in size:
+                    length, width = map(int, size.split('x'))
+                else:
+                    width = 1
+                value = ' '.join([('{0:0>%sx}' % (width*2)).format(v)
+                                  for v in value])
+                s += '  {0}: {1}\n'.format(attr, value)
+            else:
+                s += '  {0}: ???\n'.format(attr)
+        return s.strip()
+
+    @property
     def long_description(self):
         s = []
         for attr in sorted(dir(self)):
