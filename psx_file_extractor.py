@@ -13,6 +13,7 @@ DIRECTORY_PATTERN = bytes(map(fun,
 FILE_PATTERN = bytes(map(fun,
     #"2A 00 2A 00 08 01 58 41 00 00 00 00 00 00".split()))  # fft
     "00 00 00 00 0D 55 58 41 00 00 00 00 00 00".split()))
+DEBUG = False
 
 
 def file_from_sectors(imgname, initial_sector, tempname="_temp.bin"):
@@ -55,7 +56,8 @@ def file_from_sectors(imgname, initial_sector, tempname="_temp.bin"):
     return g
 
 
-def write_data_to_sectors(imgname, initial_sector, datafile="_temp.bin"):
+def write_data_to_sectors(imgname, initial_sector, datafile="_temp.bin",
+                          force_recalc=False):
     f = open(imgname, "r+b")
     g = open(datafile, "r+b")
     filesize = stat(datafile).st_size
@@ -66,7 +68,7 @@ def write_data_to_sectors(imgname, initial_sector, datafile="_temp.bin"):
         f.seek(pointer)
         block = g.read(0x800)
         if len(block) < 0x800:
-            block += "".join(map(chr, [0]*(0x800-len(block))))
+            block += bytes(0x800-len(block))
         assert len(block) == 0x800
 
         if g.tell() >= filesize:
@@ -88,21 +90,29 @@ def write_data_to_sectors(imgname, initial_sector, datafile="_temp.bin"):
         if submode & 0x7E != old_submode & 0x7E:
             print("WARNING! Submode differs on sector %s: %x -> %x" % (
                 sector_index, old_submode, submode))
-        f.seek(pointer+0x12)
-        f.write(bytes([submode]))
-        f.seek(pointer+0x16)
-        f.write(bytes([submode]))
+
         f.seek(pointer+0x18)
-        f.write(block)
-        f.seek(pointer)
-        sector_data = f.read(0x818)
-        edc, ecc = get_edc_ecc(sector_data)
-        assert len(edc + ecc) == 0x118
-        f.seek(pointer+0x818)
-        f.write(edc + ecc)
+        old_block = f.read(0x800)
+        if force_recalc or old_block != block:
+            if DEBUG:
+                print('Writing: {0} {1:0>8x}'.format(datafile, pointer))
+            f.seek(pointer+0x12)
+            f.write(bytes([submode]))
+            f.seek(pointer+0x16)
+            f.write(bytes([submode]))
+            f.seek(pointer+0x18)
+            f.write(block)
+            f.seek(pointer)
+            sector_data = f.read(0x818)
+            edc, ecc = get_edc_ecc(sector_data)
+            assert len(edc + ecc) == 0x118
+            f.seek(pointer+0x818)
+            f.write(edc + ecc)
+
         if eof and eor:
             break
         sector_index += 1
+
     f.close()
     g.close()
 
@@ -184,7 +194,8 @@ class FileManager(object):
         f.write_data(filepath)
         return filepath
 
-    def import_file(self, name, filepath=None, new_target_sector=None):
+    def import_file(self, name, filepath=None, new_target_sector=None,
+                    force_recalc=False):
         if not name.endswith(';1'):
             name = name + ';1'
         if filepath is None:
@@ -216,7 +227,8 @@ class FileManager(object):
         old_file.filesize = size_bytes
         old_file.update_file_entry()
         write_data_to_sectors(
-            old_file.imgname, old_file.target_sector, datafile=filepath)
+            old_file.imgname, old_file.target_sector, datafile=filepath,
+            force_recalc=force_recalc)
 
 
 class FileEntryReadException(Exception):

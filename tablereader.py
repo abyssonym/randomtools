@@ -3,6 +3,7 @@ from .utils import (read_multi, write_multi, classproperty,
 from functools import total_ordering
 from os import path
 from hashlib import md5
+from sys import stdout
 import string
 from copy import copy
 from collections import Counter
@@ -62,11 +63,20 @@ def create_psx_file_manager(outfile):
 def reimport_psx_files():
     if not SANDBOX_PATH:
         return
-    for filepath in OPEN_FILES:
+    last_import = -1
+    for (n, filepath) in enumerate(sorted(OPEN_FILES)):
         if filepath.startswith(SANDBOX_PATH):
+            count = int(round(9 * n / len(OPEN_FILES)))
+            if count > last_import:
+                if count == 0:
+                    print('Re-importing files...')
+                last_import = count
+                stdout.write('%s ' % (10-count))
+                stdout.flush()
             name = filepath[len(SANDBOX_PATH):].lstrip(path.sep)
             close_file(filepath)  # do before importing to flush the file
             PSX_FILE_MANAGER.import_file(name, filepath)
+    stdout.write('\n')
 
 
 def get_global_label():
@@ -484,11 +494,11 @@ class TableObject(object):
         assert isinstance(self.total_size, int)
         assert index is not None
         if hasattr(self.specs, 'subfile'):
-            if PSX_FILE_MANAGER is None:
-                create_psx_file_manager(filename)
             self.filename = path.join(SANDBOX_PATH, self.specs.subfile)
         else:
             self.filename = filename
+        if self.filename != GLOBAL_OUTPUT and PSX_FILE_MANAGER is None:
+            create_psx_file_manager(filename)
         self.pointer = pointer
         self.groupindex = groupindex
         self.variable_size = size
@@ -1507,12 +1517,14 @@ def get_table_objects(objtype, filename=None):
         filename = GLOBAL_OUTPUT
     objects = []
 
-    def add_objects(n, groupindex=0, p=None):
+    def add_objects(n, groupindex=0, p=None, obj_filename=None):
+        if obj_filename is None:
+            obj_filename = filename
         if p is None:
             p = pointer
         accumulated_size = 0
         for i in range(n):
-            obj = objtype(filename, p, index=len(objects),
+            obj = objtype(obj_filename, p, index=len(objects),
                           groupindex=groupindex)
             objects.append(obj)
             p += obj.total_size
@@ -1531,8 +1543,15 @@ def get_table_objects(objtype, filename=None):
             line = line.strip()
             if not line or line[0] == '#':
                 continue
-            pointer = int(line.split()[0], 0x10)
-            add_objects(1, p=pointer)
+            line = line.split()[0]
+            if '@' in line:
+                pointer, obj_filename = line.split('@')
+                obj_filename = path.join(SANDBOX_PATH, obj_filename)
+            else:
+                pointer = line
+                obj_filename = None
+            pointer = int(pointer, 0x10)
+            add_objects(1, p=pointer, obj_filename=obj_filename)
     elif not grouped and not pointed and not delimit:
         add_objects(number)
     elif grouped:
