@@ -10,9 +10,6 @@ SYNC_PATTERN = bytes([0] + ([0xFF]*10) + [0])
 fun = lambda x: int(x, 0x10)
 DIRECTORY_PATTERN = bytes(map(fun,
     "00 00 00 00 8D 55 58 41 00 00 00 00 00 00".split()))
-FILE_PATTERN = bytes(map(fun,
-    #"2A 00 2A 00 08 01 58 41 00 00 00 00 00 00".split()))  # fft
-    "00 00 00 00 0D 55 58 41 00 00 00 00 00 00".split()))
 DEBUG = False
 
 
@@ -329,7 +326,6 @@ class FileEntry:
             assert self.pattern == DIRECTORY_PATTERN
         else:
             assert self.name[-2:] == ";1"
-            #assert self.pattern == FILE_PATTERN
         assert f.tell() == self.pointer + self.size
         f.close()
 
