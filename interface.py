@@ -1,5 +1,5 @@
 from sys import argv
-from os import stat
+from os import stat, listdir
 import string
 from time import time
 from shutil import copyfile
@@ -13,6 +13,7 @@ from .tablereader import (
 from .utils import (
     utilrandom as random, rewrite_snes_title, rewrite_snes_checksum,
     md5hash)
+from .psx_file_extractor import DELTA_FILE
 
 sourcefile = None
 outfile = None
@@ -191,7 +192,27 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
         if snes:
             snescopy(sourcefile, outfile)
         else:
-            copyfile(sourcefile, outfile)
+            if (DELTA_FILE is not None
+                    and DELTA_FILE in listdir() and outfile in listdir()):
+                f = open(sourcefile, 'r+b')
+                g = open(outfile, 'r+b')
+                for line in open(DELTA_FILE):
+                    line = line.strip()
+                    start, finish = line.split()
+                    start = int(start, 0x10)
+                    finish = int(finish, 0x10)
+                    assert finish > start
+                    f.seek(start)
+                    g.seek(start)
+                    data = f.read(finish-start)
+                    g.write(data)
+                f.close()
+                g.close()
+            else:
+                copyfile(sourcefile, outfile)
+            if DELTA_FILE is not None:
+                f = open(DELTA_FILE, 'w+')
+                f.close()
     except (OSError, IOError) as e:
         if e.strerror == "No such file or directory":
             e.strerror = ('%s; Did you include the filename extension? For '

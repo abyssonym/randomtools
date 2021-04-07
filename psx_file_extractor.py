@@ -1,5 +1,5 @@
 from sys import argv
-from os import makedirs, path, stat
+from os import makedirs, path, stat, environ
 from string import printable
 from subprocess import call
 from .utils import read_multi, write_multi
@@ -10,7 +10,9 @@ SYNC_PATTERN = bytes([0] + ([0xFF]*10) + [0])
 fun = lambda x: int(x, 0x10)
 DIRECTORY_PATTERN = bytes(map(fun,
     "00 00 00 00 8D 55 58 41 00 00 00 00 00 00".split()))
-DEBUG = False
+
+DEBUG = environ.get('DEBUG')
+DELTA_FILE = environ.get('DELTA')
 
 
 def file_from_sectors(imgname, initial_sector, tempname="_temp.bin"):
@@ -59,6 +61,10 @@ def write_data_to_sectors(imgname, initial_sector, datafile="_temp.bin",
     g = open(datafile, "r+b")
     filesize = stat(datafile).st_size
 
+    delta = None
+    if DELTA_FILE is not None:
+        delta = open(DELTA_FILE, 'a+')
+
     sector_index = initial_sector
     while True:
         pointer = sector_index * 0x930
@@ -105,6 +111,9 @@ def write_data_to_sectors(imgname, initial_sector, datafile="_temp.bin",
             assert len(edc + ecc) == 0x118
             f.seek(pointer+0x818)
             f.write(edc + ecc)
+            if delta is not None:
+                delta.write('{0:0>8x} {1:0>8x}\n'.format(pointer,
+                                                         pointer+0x930))
 
         if eof and eor:
             break
@@ -112,6 +121,9 @@ def write_data_to_sectors(imgname, initial_sector, datafile="_temp.bin",
 
     f.close()
     g.close()
+
+    if delta is not None:
+        delta.close()
 
 
 class FileManager(object):
