@@ -17,11 +17,15 @@ def cached_property(fn):
     return cacher
 
 
-def md5hash(filename):
-    f = open(filename, 'r+b')
-    data = f.read()
-    f.close()
-    return md5(data).hexdigest()
+def md5hash(filename, blocksize=65536):
+    m = md5()
+    with open(filename, 'r+b') as f:
+        while True:
+            buf = f.read(blocksize)
+            if not buf:
+                break
+            m.update(buf)
+    return m.hexdigest()
 
 
 def int2bytes(value, length=2, reverse=True):
