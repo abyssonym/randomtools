@@ -326,8 +326,8 @@ def clean_and_write(objects):
     for o in objects:
         o.write_all(outfile)
 
-    reimport_psx_files()
     verify_patches(outfile)
+    reimport_psx_files()
 
 
 def finish_interface():

@@ -36,7 +36,9 @@ PSX_FILE_MANAGER = None
 OPEN_FILES = {}
 
 
-def get_open_file(filepath):
+def get_open_file(filepath, sandbox=False):
+    if sandbox and not filepath.startswith(SANDBOX_PATH):
+        filepath = path.join(SANDBOX_PATH, filepath)
     if filepath in OPEN_FILES:
         f = OPEN_FILES[filepath]
         if not f.closed:
@@ -257,7 +259,7 @@ def write_patch(outfile, patchfilename, noverify=False):
         else:
             if PSX_FILE_MANAGER is None:
                 create_psx_file_manager(outfile)
-            f = get_open_file(path.join(SANDBOX_PATH, filename))
+            f = get_open_file(filename, sandbox=True)
         f.seek(address)
         f.write(code)
 
@@ -339,7 +341,7 @@ def verify_patches(outfile):
             if filename is None:
                 f = get_open_file(outfile)
             else:
-                f = get_open_file(path.join(SANDBOX_PATH, filename))
+                f = get_open_file(filename, sandbox=True)
             f.seek(address)
             written = f.read(len(code))
             if code != written:
