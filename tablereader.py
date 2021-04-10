@@ -1289,10 +1289,13 @@ class TableObject(object):
                 value = self.get_bit(attribute)
                 self.set_bit(attribute, not value)
 
-    def magic_mutate_bits(self):
+    def magic_mutate_bits(self, random_degree=None):
         if (self.rank < 0 or not hasattr(self, "magic_mutate_bit_attributes")
                 or not self.magic_mutate_valid):
             return
+
+        if random_degree is None:
+            random_degree = self.random_degree
 
         base_candidates = [o for o in self.every
                            if o.magic_mutate_valid and o.rank >= 0]
@@ -1352,7 +1355,7 @@ class TableObject(object):
                     valdict = dict(zip(attributes, values))
                     frequency = counted_candidates[values]
                     frequency = int(
-                        round(frequency ** (1-(self.random_degree**0.5))))
+                        round(frequency ** (1-(random_degree**0.5))))
                     candidates.extend([valdict]*frequency)
                 self._candidates_dict[attributes] = candidates
 
@@ -1367,7 +1370,7 @@ class TableObject(object):
             index = candidates.index(obj_to_dict(self))
             max_index = len(candidates)-1
             index = mutate_normal(index, 0, max_index,
-                                  random_degree=self.random_degree, wide=True)
+                                  random_degree=random_degree, wide=True)
             chosen = candidates[index]
             if chosen is self:
                 continue
@@ -1386,11 +1389,11 @@ class TableObject(object):
                         break
 
                     if (bit & mask and not bit & diffmask
-                            and random.random() < self.random_degree ** 6):
+                            and random.random() < random_degree ** 6):
                         diffmask |= bit
 
                     if bit & diffmask:
-                        if random.random() < ((self.random_degree**0.5)/2.0):
+                        if random.random() < ((random_degree**0.5)/2.0):
                             continue
                         else:
                             diffmask ^= bit
