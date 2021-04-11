@@ -38,6 +38,8 @@ OPEN_FILES = {}
 
 
 def get_open_file(filepath, sandbox=False):
+    filepath = filepath.replace('/', path.sep)
+    filepath = filepath.replace('\\', path.sep)
     if sandbox and not filepath.startswith(SANDBOX_PATH):
         filepath = path.join(SANDBOX_PATH, filepath)
     if filepath in OPEN_FILES:
