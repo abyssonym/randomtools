@@ -8,7 +8,8 @@ from collections import defaultdict
 from .tablereader import (
     determine_global_table, sort_good_order, set_table_specs,
     set_global_output_filename, select_patches, write_patches, verify_patches,
-    get_random_degree, set_random_degree, set_seed, get_seed, close_file,
+    get_random_degree, set_random_degree, get_difficulty, set_difficulty,
+    set_seed, get_seed, close_file,
     reimport_psx_files)
 from .utils import (
     utilrandom as random, rewrite_snes_title, rewrite_snes_checksum,
@@ -19,7 +20,6 @@ sourcefile = None
 outfile = None
 flags = None
 user_input_flags = None
-difficulty = None
 activated_codes = None
 all_objects = None
 
@@ -95,7 +95,8 @@ def snescopy(sourcefile, outfile):
         raise Exception("Inappropriate file size for SNES rom file.")
 
 
-def run_interface(objects, custom_degree=False, snes=False, codes=None):
+def run_interface(objects, custom_degree=False, custom_difficulty=False,
+                  codes=None, snes=False):
     global sourcefile, outfile, flags, user_input_flags
     global activated_codes, all_objects
 
@@ -105,13 +106,16 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
         codes = {}
     activated_codes = set([])
 
-    args = list(argv)[:5]
+    args = list(argv)[:6]
     num_args = len(args)
-    while len(args) < 5:
+    while len(args) < 6:
         args.append(None)
-    _, sourcefile, flags, seed, random_degree = tuple(args)
+    (_, sourcefile, flags, seed,
+            random_degree, difficulty_multiplier) = tuple(args)
     if random_degree is None and num_args >= 2:
         random_degree = 0.5
+    if difficulty_multiplier is None and num_args >= 2:
+        difficulty_multiplier = 1.0
 
     if sourcefile is None:
         print('TIP: Try dragging-and-dropping the rom file '
@@ -189,6 +193,7 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
         outfile = outfile.replace("..", ".")
 
     try:
+        print('Making copy of rom file...')
         if snes:
             snescopy(sourcefile, outfile)
         else:
@@ -271,6 +276,56 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
         random_degree = min(1.0, max(0.0, random_degree))
         set_random_degree(random_degree ** 2)
 
+    custom_difficulty = custom_difficulty or difficulty_multiplier is not None
+    if custom_difficulty:
+        custom_split = False
+        for o in sorted(objects, key=lambda ob: str(ob)):
+            if (hasattr(o, "custom_difficulty_enable")
+                    and o.custom_difficulty_enable):
+                custom_split = True
+                break
+
+        if difficulty_multiplier is None:
+            if custom_split:
+                print("\nIf you would like even more control over the "
+                      "difficulty, type \"custom\" here.")
+            difficulty_multiplier = input(
+                "Difficulty? (default: 1.0) ").strip()
+            if not difficulty_multiplier:
+                difficulty_multiplier = 1.0
+
+        if custom_split and (
+                isinstance(difficulty_multiplier, str) and
+                "custom" in difficulty_multiplier.strip().lower()):
+            custom_dict = defaultdict(set)
+            for o in sorted(objects, key=lambda o: str(o)):
+                if (hasattr(o, "custom_difficulty_enable")
+                        and o.custom_difficulty_enable):
+                    if o.custom_difficulty_enable is True:
+                        custom_dict[o.flag].add(o)
+                    else:
+                        custom_dict[o.custom_difficulty_enable].add(o)
+
+            for k in sorted(custom_dict):
+                os = sorted(custom_dict[k], key=lambda o: o.__name__)
+                onames = ", ".join([o.__name__ for o in os])
+                s = input("Difficulty for %s? " % onames).strip()
+                if not s:
+                    continue
+                for o in os:
+                    cdiff = float(s)
+                    assert isinstance(cdiff, float)
+                    o.custom_difficulty = cdiff
+
+            difficulty_multiplier = input("Difficulty for everything"
+                                          " unspecified? ").strip()
+            if not difficulty_multiplier:
+                difficulty_multiplier = 1.0
+
+        difficulty_multiplier = float(difficulty_multiplier)
+        assert isinstance(difficulty_multiplier, float)
+        set_difficulty(difficulty_multiplier)
+
     if num_args < 3:
         select_patches()
 
@@ -285,6 +340,8 @@ def run_interface(objects, custom_degree=False, snes=False, codes=None):
               % (sourcefile, flags, seed), end=' ')
     if custom_degree:
         print("and randomness %s" % random_degree, end=' ')
+    if custom_difficulty:
+        print("and difficulty %s" % difficulty_multiplier, end=' ')
     print("now.\n")
 
     if user_input_flags is None:

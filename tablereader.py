@@ -31,6 +31,7 @@ OPTION_FILENAMES = []
 NOVERIFY_PATCHES = []
 CMP_PATCH_FILENAMES = []
 RANDOM_DEGREE = 0.25
+DIFFICULTY = 1.0
 SEED = None
 PSX_FILE_MANAGER = None
 OPEN_FILES = {}
@@ -382,6 +383,16 @@ def get_random_degree():
     return RANDOM_DEGREE
 
 
+def set_difficulty(value):
+    global DIFFICULTY
+    DIFFICULTY = value
+
+
+def get_difficulty():
+    global DIFFICULTY
+    return DIFFICULTY
+
+
 def gen_random_normal(random_degree=None):
     if random_degree is None:
         random_degree = get_random_degree()
@@ -564,6 +575,13 @@ class TableObject(object):
             return cls.custom_random_degree
         else:
             return get_random_degree()
+
+    @classproperty
+    def random_difficulty(cls):
+        if hasattr(cls, 'custom_difficulty'):
+            return cls.custom_difficulty
+        else:
+            return get_difficulty()
 
     @classproperty
     def numgroups(cls):
