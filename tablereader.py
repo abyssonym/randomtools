@@ -142,10 +142,12 @@ def determine_global_table(outfile):
 
 def patch_filename_to_bytecode(patchfilename):
     patch = {}
+    validation = {}
     definitions = {}
     labels = {}
     next_address = None
     filename = None
+    read_into = patch
     f = open(patchfilename)
     for line in f:
         line = line.strip()
@@ -177,6 +179,13 @@ def patch_filename_to_bytecode(patchfilename):
             if name in line:
                 line = line.replace(name, definitions[name])
 
+        if line.upper() == 'VALIDATION':
+            read_into = validation
+            continue
+
+        if ':' not in line:
+            line = ':' + line
+
         address, code = line.split(':')
         address = address.strip()
         if not address:
@@ -189,35 +198,36 @@ def patch_filename_to_bytecode(patchfilename):
         while '  ' in code:
             code = code.replace('  ', ' ')
 
-        if (address, filename) in patch:
+        if (address, filename) in read_into:
             raise Exception("Multiple %x patches used." % address)
         if code:
-            patch[(address, filename)] = code
+            read_into[(address, filename)] = code
         for name in labels:
             if labels[name] is None:
                 labels[name] = (address, filename)
 
         next_address = address + len(code.split())
 
-    for (address, filename) in sorted(patch):
-        code = patch[address, filename]
-        for name in sorted(labels, key=lambda l: (-len(l), l)):
-            if name in code:
-                target_address, target_filename = labels[name]
-                assert target_filename == filename
-                jump = target_address - (address + 2)
-                if jump < 0:
-                    jump = 0x100 + jump
-                if not 0 <= jump <= 0xFF:
-                    raise Exception("Label out of range %x - %s" %
-                                    (address, code))
-                code = code.replace(name, "%x" % jump)
+    for read_into in (patch, validation):
+        for (address, filename) in sorted(read_into):
+            code = read_into[address, filename]
+            for name in sorted(labels, key=lambda l: (-len(l), l)):
+                if name in code:
+                    target_address, target_filename = labels[name]
+                    assert target_filename == filename
+                    jump = target_address - (address + 2)
+                    if jump < 0:
+                        jump = 0x100 + jump
+                    if not 0 <= jump <= 0xFF:
+                        raise Exception("Label out of range %x - %s" %
+                                        (address, code))
+                    code = code.replace(name, "%x" % jump)
 
-        code = bytearray(map(lambda s: int(s, 0x10), code.split()))
-        patch[address, filename] = code
+            code = bytearray(map(lambda s: int(s, 0x10), code.split()))
+            read_into[address, filename] = code
 
     f.close()
-    return patch
+    return patch, validation
 
 
 def select_patches():
@@ -255,16 +265,29 @@ def write_patch(outfile, patchfilename, noverify=False):
         CMP_PATCH_FILENAMES.append(patchfilename)
         return write_cmp_patch(f, patchpath)
 
-    patch = patch_filename_to_bytecode(patchpath)
-    for (address, filename), code in sorted(patch.items()):
-        if filename is None:
-            f = get_open_file(outfile)
-        else:
-            if PSX_FILE_MANAGER is None:
-                create_psx_file_manager(outfile)
-            f = get_open_file(filename, sandbox=True)
-        f.seek(address)
-        f.write(code)
+    patch, validation = patch_filename_to_bytecode(patchpath)
+    for patchdict in (validation, patch):
+        for (address, filename), code in sorted(patchdict.items()):
+            if filename is None:
+                f = get_open_file(outfile)
+            else:
+                if PSX_FILE_MANAGER is None:
+                    create_psx_file_manager(outfile)
+                f = get_open_file(filename, sandbox=True)
+            f.seek(address)
+
+            if patchdict is validation:
+                validate = f.read(len(code))
+                if validate != code:
+                    error = ('Patch %s-%x did not pass validation.'
+                             % (patchfilename, address))
+                    if noverify:
+                        print('WARNING: %s' % error)
+                    else:
+                        raise Exception(error)
+            else:
+                assert patchdict is patch
+                f.write(code)
 
     if patchfilename not in PATCH_FILENAMES:
         PATCH_FILENAMES.append(patchfilename)
@@ -339,7 +362,7 @@ def verify_patches(outfile):
         if patchfilename in CMP_PATCH_FILENAMES:
             write_cmp_patch(f, patchpath, verify=True)
             continue
-        patch = patch_filename_to_bytecode(patchpath)
+        patch, validation = patch_filename_to_bytecode(patchpath)
         for (address, filename), code in sorted(patch.items()):
             if filename is None:
                 f = get_open_file(outfile)
