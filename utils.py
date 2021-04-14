@@ -406,6 +406,8 @@ def rewrite_snes_title(text, filename, version, lorom=False):
     f.seek(0xFFC0 & mask)
     f.write(bytes(text.encode('ascii')))
     f.seek(0xFFDB & mask)
+    if isinstance(version, str) and '.' in version:
+        version = version.split('.')[0]
     f.write(bytes([int(version)]))
     f.close()
 
