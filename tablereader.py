@@ -578,9 +578,11 @@ class TableObject(object):
         return (self.rank, self.index) < (other.rank, other.index)
 
     @classmethod
-    def create_new(cls):
+    def create_new(cls, filename=None):
+        if filename is None:
+            filename = GLOBAL_OUTPUT
         index = max([o.index for o in cls.every]) + 1
-        new = cls(index=index)
+        new = cls(filename=filename, index=index)
         #new.old_data = {}
         for name, size, other in new.specsattrs:
             if other in [None, "int"]:
