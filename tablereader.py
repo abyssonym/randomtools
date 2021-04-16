@@ -253,9 +253,11 @@ def select_patches():
         PATCH_FILENAMES.remove(pfn)
 
 
-def write_patch(outfile, patchfilename, noverify=False):
-    if noverify:
+def write_patch(outfile, patchfilename, noverify=None):
+    if noverify and patchfilename not in NOVERIFY_PATCHES:
         NOVERIFY_PATCHES.append(patchfilename)
+    elif noverify is None and patchfilename in NOVERIFY_PATCHES:
+        noverify = True
     patchpath = path.join(tblpath, patchfilename)
     pf = open(patchpath, 'r+b')
     magic_word = pf.read(5)
