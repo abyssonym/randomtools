@@ -109,8 +109,11 @@ def set_seed(seed):
     SEED = seed
 
 
-def determine_global_table(outfile):
+def determine_global_table(outfile, interactive=True):
     global GLOBAL_LABEL
+    if GLOBAL_LABEL is not None:
+        return GLOBAL_LABEL
+
     tablefiles, labelfiles = {}, {}
     for line in open(path.join(tblpath, MASTER_FILENAME)):
         line = line.strip()
@@ -124,7 +127,7 @@ def determine_global_table(outfile):
     h = md5hash(outfile)
     if h in tablefiles:
         label, filename = tablefiles[h]
-    else:
+    elif interactive:
         print("Unrecognized rom file: %s" % h)
         for i, label in enumerate(sorted(labelfiles)):
             print("%s. %s" % ((i+1), label))
@@ -136,8 +139,12 @@ def determine_global_table(outfile):
             input("Using this rom information. Okay? ")
             label = sorted(labelfiles.keys())[0]
             filename = labelfiles[label]
+    else:
+        return None
+
     GLOBAL_LABEL = label
     set_global_table_filename(filename)
+    return GLOBAL_LABEL
 
 
 def patch_filename_to_bytecode(patchfilename):

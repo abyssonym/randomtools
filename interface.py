@@ -218,6 +218,10 @@ def run_interface(objects, custom_degree=False, custom_difficulty=False,
             if DELTA_FILE is not None:
                 f = open(DELTA_FILE, 'w+')
                 f.close()
+                label = determine_global_table(outfile, interactive=False)
+                if label is None:
+                    print('Delta failed. Copying full rom.')
+                    copyfile(sourcefile, outfile)
     except (OSError, IOError) as e:
         if e.strerror == "No such file or directory":
             e.strerror = ('%s; Did you include the filename extension? For '
