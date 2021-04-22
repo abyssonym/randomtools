@@ -27,6 +27,7 @@ GLOBAL_TABLE = None
 GLOBAL_LABEL = None
 GRAND_OBJECT_DICT = {}
 PATCH_FILENAMES = []
+ALREADY_PATCHED = set()
 OPTION_FILENAMES = []
 NOVERIFY_PATCHES = []
 CMP_PATCH_FILENAMES = []
@@ -260,7 +261,9 @@ def select_patches():
         PATCH_FILENAMES.remove(pfn)
 
 
-def write_patch(outfile, patchfilename, noverify=None):
+def write_patch(outfile, patchfilename, noverify=None, force=False):
+    if patchfilename in ALREADY_PATCHED and not force:
+        return
     if noverify and patchfilename not in NOVERIFY_PATCHES:
         NOVERIFY_PATCHES.append(patchfilename)
     elif noverify is None and patchfilename in NOVERIFY_PATCHES:
@@ -300,6 +303,7 @@ def write_patch(outfile, patchfilename, noverify=None):
 
     if patchfilename not in PATCH_FILENAMES:
         PATCH_FILENAMES.append(patchfilename)
+    ALREADY_PATCHED.add(patchfilename)
 
 
 def write_cmp_patch(outfile, patchfilename, verify=False):
