@@ -368,6 +368,8 @@ def run_interface(objects, custom_degree=False, custom_difficulty=False,
         o.every
     for o in objects:
         o.ranked
+    for o in objects:
+        o.preprocess_all()
 
     for o in objects:
         if hasattr(o, "flag_description") and o.flag in flags:

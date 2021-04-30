@@ -1194,6 +1194,9 @@ class TableObject(object):
                 f.write(chr(cls.specsdelimitval))
                 pointer += 1
 
+    def preprocess(self):
+        return
+
     def preclean(self):
         return
 
@@ -1242,6 +1245,12 @@ class TableObject(object):
         obj.reseed(salt="cls"+salt)
 
     @classmethod
+    def preprocess_all(cls):
+        for o in cls.every:
+            o.reseed(salt="preprocess")
+            o.preprocess()
+
+    @classmethod
     def full_randomize(cls):
         if hasattr(cls, "after_order"):
             for cls2 in cls.after_order:
@@ -1249,6 +1258,7 @@ class TableObject(object):
                         and cls2.randomize_step_finished):
                     raise Exception("Randomize order violated: %s %s"
                                     % (cls, cls2))
+
         cls.class_reseed("group")
         cls.groupshuffle()
         cls.class_reseed("inter")
