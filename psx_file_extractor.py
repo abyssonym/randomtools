@@ -64,6 +64,8 @@ def write_data_to_sectors(imgname, initial_sector, datafile="_temp.bin",
     delta = None
     if DELTA_FILE is not None:
         delta = open(DELTA_FILE, 'a+')
+    if not hasattr(write_data_to_sectors, '_done_delta'):
+        write_data_to_sectors._done_delta = set()
 
     sector_index = initial_sector
     while True:
@@ -111,7 +113,9 @@ def write_data_to_sectors(imgname, initial_sector, datafile="_temp.bin",
             assert len(edc + ecc) == 0x118
             f.seek(pointer+0x818)
             f.write(edc + ecc)
-            if delta is not None:
+            if delta is not None and ((pointer, pointer+0x930) not in
+                                       write_data_to_sectors._done_delta):
+                write_data_to_sectors._done_delta.add((pointer, pointer+0x930))
                 delta.write('{0:0>8x} {1:0>8x}\n'.format(pointer,
                                                          pointer+0x930))
 
