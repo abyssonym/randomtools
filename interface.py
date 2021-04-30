@@ -95,6 +95,16 @@ def snescopy(sourcefile, outfile):
         raise Exception("Inappropriate file size for SNES rom file.")
 
 
+def write_cue_file():
+    filename = get_outfile()
+    cue_filename = '.'.join(filename.split('.')[:-1] + ['cue'])
+    f = open(cue_filename, 'w+')
+    f.write('FILE "{0}" BINARY\n\n'
+            'TRACK 01 MODE2/2352\n\n'
+            'INDEX 01 00:00:00\n'.format(filename))
+    f.close()
+
+
 def run_interface(objects, custom_degree=False, custom_difficulty=False,
                   codes=None, snes=False):
     global sourcefile, outfile, flags, user_input_flags
