@@ -36,6 +36,8 @@ DIFFICULTY = 1.0
 SEED = None
 PSX_FILE_MANAGER = None
 OPEN_FILES = {}
+ALL_FILES = set()
+MAX_OPEN_FILE_COUNT = 100
 
 
 def get_open_file(filepath, sandbox=False):
@@ -47,17 +49,25 @@ def get_open_file(filepath, sandbox=False):
         f = OPEN_FILES[filepath]
         if not f.closed:
             return OPEN_FILES[filepath]
-    if filepath.startswith(SANDBOX_PATH):
+
+    if len(OPEN_FILES) >= MAX_OPEN_FILE_COUNT:
+        for openfp in list(OPEN_FILES):
+            close_file(openfp)
+
+    if filepath.startswith(SANDBOX_PATH) and filepath not in ALL_FILES:
         name = filepath[len(SANDBOX_PATH):].lstrip(path.sep)
         PSX_FILE_MANAGER.export_file(name, filepath)
+
     f = open(filepath, "r+b")
     OPEN_FILES[filepath] = f
+    ALL_FILES.add(filepath)
     return get_open_file(filepath)
 
 
 def close_file(filepath):
     if filepath in OPEN_FILES:
         OPEN_FILES[filepath].close()
+        del(OPEN_FILES[filepath])
 
 
 def create_psx_file_manager(outfile):
@@ -70,9 +80,9 @@ def reimport_psx_files():
     if not SANDBOX_PATH:
         return
     last_import = -1
-    for (n, filepath) in enumerate(sorted(OPEN_FILES)):
+    for (n, filepath) in enumerate(sorted(ALL_FILES)):
         if filepath.startswith(SANDBOX_PATH):
-            count = int(round(9 * n / len(OPEN_FILES)))
+            count = int(round(9 * n / len(ALL_FILES)))
             if count > last_import:
                 if count == 0:
                     print('Re-importing files...')
