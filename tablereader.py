@@ -879,11 +879,14 @@ class TableObject(object):
         except KeyError:
             return False
 
-    def get_bit(self, bitname):
+    def get_bit(self, bitname, old=False):
         for key, value in sorted(self.bitnames.items()):
             if bitname in value:
                 index = value.index(bitname)
-                byte = getattr(self, key)
+                if old:
+                    byte = self.old_data[key]
+                else:
+                    byte = getattr(self, key)
                 bitvalue = byte & (1 << index)
                 return bool(bitvalue)
         raise Exception("No bit registered under that name.")
