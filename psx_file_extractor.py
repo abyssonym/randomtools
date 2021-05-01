@@ -1,7 +1,7 @@
-from sys import argv
+from math import ceil
 from os import makedirs, path, stat, environ
 from string import printable
-from subprocess import call
+from sys import argv
 from .utils import read_multi, write_multi
 from .cdrom_ecc import get_edc_ecc
 
@@ -10,13 +10,19 @@ SYNC_PATTERN = bytes([0] + ([0xFF]*10) + [0])
 fun = lambda x: int(x, 0x10)
 DIRECTORY_PATTERN = bytes(map(fun,
     "00 00 00 00 8D 55 58 41 00 00 00 00 00 00".split()))
+SANDBOX_PATH = '_temp'
 
 DEBUG = environ.get('DEBUG')
 DELTA_FILE = environ.get('DELTA')
 
 
-def file_from_sectors(imgname, initial_sector, tempname="_temp.bin"):
-    f = open(imgname, "r+b")
+def file_from_sectors(imgname, initial_sector, tempname=None):
+    if not path.exists(SANDBOX_PATH):
+        makedirs(SANDBOX_PATH)
+    if tempname is None:
+        tempname = path.join(SANDBOX_PATH, '_temp.bin')
+
+    f = open(imgname, "rb")
     g = open(tempname, "w+")
     g.close()
     g = open(tempname, "r+b")
@@ -55,8 +61,11 @@ def file_from_sectors(imgname, initial_sector, tempname="_temp.bin"):
     return g
 
 
-def write_data_to_sectors(imgname, initial_sector, datafile="_temp.bin",
+def write_data_to_sectors(imgname, initial_sector, datafile=None,
                           force_recalc=False):
+    if datafile is None:
+        datafile = path.join(SANDBOX_PATH, '_temp.bin')
+
     f = open(imgname, "r+b")
     g = open(datafile, "r+b")
     filesize = stat(datafile).st_size
@@ -145,6 +154,9 @@ class FileManager(object):
 
     @property
     def flat_files(self):
+        if hasattr(self, '_flat_files'):
+            return self._flat_files
+
         files = list(self.files)
         while True:
             for f in list(files):
@@ -156,7 +168,9 @@ class FileManager(object):
                     break
             else:
                 break
-        return files
+
+        self._flat_files = files
+        return self.flat_files
 
     @property
     def flat_directories(self):
@@ -208,33 +222,41 @@ class FileManager(object):
         return filepath
 
     def import_file(self, name, filepath=None, new_target_sector=None,
-                    force_recalc=False):
+                    force_recalc=False, verify=False):
         if not name.endswith(';1'):
             name = name + ';1'
         if filepath is None:
             filepath = path.join(self.dirname, name)
         old_file = self.get_file(name)
+
+        size_bytes = stat(filepath).st_size
+
+        verify = verify or DEBUG
+        if (new_target_sector is not None
+                or ceil(size_bytes / 0x800) > ceil(old_file.filesize / 0x800)):
+            verify = True
+
         if new_target_sector is None:
             new_target_sector = old_file.target_sector
 
-        size_bytes = stat(filepath).st_size
-        size_sectors = size_bytes / 0x800
-        if size_bytes > size_sectors * 0x800:
-            size_sectors += 1
-        size_sectors = max(size_sectors, 1)
-        end_sector = new_target_sector + size_sectors
+        if verify:
+            size_sectors = size_bytes / 0x800
+            if size_bytes > size_sectors * 0x800:
+                size_sectors += 1
+            size_sectors = max(size_sectors, 1)
+            end_sector = new_target_sector + size_sectors
 
-        self_path = path.join(self.dirname, name)
-        for f in self.flat_files:
-            if f.__repr__() == self_path:
-                continue
-            try:
-                if f.start_sector <= new_target_sector:
-                    assert f.end_sector <= new_target_sector
-                if f.start_sector >= new_target_sector:
-                    assert end_sector <= f.start_sector
-            except AssertionError:
-                raise Exception("Conflict with %s" % f)
+            self_path = path.join(self.dirname, name)
+            for f in self.flat_files:
+                if f.__repr__() == self_path:
+                    continue
+                try:
+                    if f.start_sector <= new_target_sector:
+                        assert f.end_sector <= new_target_sector
+                    if f.start_sector >= new_target_sector:
+                        assert end_sector <= f.start_sector
+                except AssertionError:
+                    raise Exception("Conflict with %s" % f)
 
         old_file.target_sector = new_target_sector
         old_file.filesize = size_bytes
@@ -242,6 +264,9 @@ class FileManager(object):
         write_data_to_sectors(
             old_file.imgname, old_file.target_sector, datafile=filepath,
             force_recalc=force_recalc)
+
+    def finish(self):
+        FileEntry.write_cached_files()
 
 
 class FileEntryReadException(Exception):
@@ -257,7 +282,7 @@ class FileEntry:
         self.read_data()
 
     def __repr__(self):
-        return path.join(self.dirname, self.name)
+        return self.path
 
     @property
     def printable_name(self):
@@ -280,10 +305,37 @@ class FileEntry:
             num_sectors += 1
         return max(num_sectors, 1)
 
+    @classmethod
+    def get_cached_file_from_sectors(self, imgname, initial_sector):
+        if not hasattr(FileEntry, '_file_cache'):
+            FileEntry._file_cache = {}
+
+        key = (imgname, initial_sector)
+        if key in FileEntry._file_cache:
+            return FileEntry._file_cache[key]
+
+        tempname = '_temp.{0:x}.bin'.format(initial_sector)
+        tempname = path.join(SANDBOX_PATH, tempname)
+        f = file_from_sectors(imgname, initial_sector, tempname)
+        FileEntry._file_cache[key] = f
+
+        return FileEntry.get_cached_file_from_sectors(imgname, initial_sector)
+
+    @classmethod
+    def write_cached_files(self):
+        if not hasattr(FileEntry, '_file_cache'):
+            return
+
+        for (imgname, initial_sector), f in sorted(
+                FileEntry._file_cache.items()):
+            fname = f.name
+            f.close()
+            write_data_to_sectors(imgname, initial_sector, datafile=fname)
+
     def update_file_entry(self):
-        tempname = "_temp.bin"
-        f = file_from_sectors(self.imgname, self.initial_sector,
-                              tempname=tempname)
+        f = self.get_cached_file_from_sectors(self.imgname,
+                                              self.initial_sector)
+
         f.seek(self.pointer+2)
         write_multi(f, self.target_sector, length=4)
         f.seek(self.pointer+6)
@@ -292,15 +344,10 @@ class FileEntry:
         write_multi(f, self.filesize, length=4)
         f.seek(self.pointer+14)
         write_multi(f, self.filesize, length=4, reverse=False)
-        f.close()
-
-        write_data_to_sectors(
-            self.imgname, self.initial_sector, datafile=tempname)
 
     def read_data(self):
-        #f = open(self.imgname, 'r+b')
-        f = file_from_sectors(self.imgname, self.initial_sector)
-        #print(self.pointer)
+        f = self.get_cached_file_from_sectors(self.imgname,
+                                              self.initial_sector)
         f.seek(self.pointer)
         peek = f.read(1)
         if not peek:
@@ -334,6 +381,7 @@ class FileEntry:
         f.seek(2, 1)
         self.name_length = ord(f.read(1))
         self.name = f.read(self.name_length).decode('ascii')
+        self.path = path.join(self.dirname, self.name)
         if not self.name_length % 2:
             p = ord(f.read(1))
             assert p == 0
@@ -343,7 +391,6 @@ class FileEntry:
         else:
             assert self.name[-2:] == ";1"
         assert f.tell() == self.pointer + self.size
-        f.close()
 
     def write_data(self, filepath=None):
         if self.is_directory or not self.printable_name or not self.filesize:
@@ -352,10 +399,8 @@ class FileEntry:
             filepath = path.join(self.dirname, self.name)
             assert filepath.endswith(';1')
             filepath = filepath[:-2]
-            try:
+            if not path.exists(self.dirname):
                 makedirs(self.dirname)
-            except OSError:
-                pass
 
         try:
             f = file_from_sectors(self.imgname, self.target_sector, filepath)
@@ -407,6 +452,8 @@ def read_directory(imgname, dirname, sector_index=None,
 
 
 if __name__ == "__main__":
+    from subprocess import call
+
     filename = argv[1]
     if len(argv) > 2:
         sector_address = argv[2]

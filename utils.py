@@ -19,7 +19,7 @@ def cached_property(fn):
 
 def md5hash(filename, blocksize=65536):
     m = md5()
-    with open(filename, 'r+b') as f:
+    with open(filename, 'rb') as f:
         while True:
             buf = f.read(blocksize)
             if not buf:

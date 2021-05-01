@@ -239,7 +239,7 @@ def run_interface(objects, custom_degree=False, custom_difficulty=False,
         raise e
     set_global_output_filename(outfile)
     determine_global_table(outfile)
-    set_table_specs()
+    set_table_specs(objects)
 
     custom_degree = custom_degree or random_degree is not None
     if custom_degree:
