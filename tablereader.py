@@ -19,6 +19,7 @@ head = __file__.rsplit('randomtools', 1)[0]
 tblpath = path.join(head, tblpath)
 
 addresses = lambda: None
+names = lambda: None
 
 MASTER_FILENAME = "master.txt"
 TABLE_SPECS = {}
@@ -1682,8 +1683,21 @@ def set_table_specs(objects, filename=None):
         if line[0] == '$':
             attr, value = line.lstrip('$').strip().split(' ', 1)
             attr = attr.strip()
-            value = int(value.strip(), 0x10)
-            setattr(addresses, attr, value)
+            value = value.strip()
+            try:
+                value = int(value, 0x10)
+                setattr(addresses, attr, value)
+            except ValueError:
+                namesfilepath = path.join(tblpath, value)
+                namelist = []
+                with open(namesfilepath) as namesfile:
+                    for line in namesfile:
+                        if '#' in line:
+                            line, _ = line.split('#', 1)
+                        line = line.strip()
+                        namelist.append(line)
+                setattr(names, attr, namelist)
+
             continue
 
         if any(line.startswith(s) for s in [".patch", ".option"]):
