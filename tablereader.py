@@ -667,6 +667,10 @@ class TableObject(object):
         return True
 
     @property
+    def intershuffle_group(self):
+        return None
+
+    @property
     def magic_mutate_valid(self):
         return True
 
@@ -728,6 +732,9 @@ class TableObject(object):
 
         candidates = sorted(set(candidates),
                             key=lambda c: (c.rank, c.signature, c.index))
+        if self.intershuffle_group is not None:
+            candidates = [c for c in candidates
+                          if c.intershuffle_group == self.intershuffle_group]
 
         if len(candidates) <= 0:
             raise Exception("No candidates for get_similar")
@@ -1217,7 +1224,7 @@ class TableObject(object):
         cls.class_reseed("inter")
         cls.intershuffle()
         cls.class_reseed("randsel")
-        cls.randomselect()
+        cls.randomselect_all()
         cls.class_reseed("full")
         cls.shuffle_all()
         cls.randomize_all()
@@ -1429,6 +1436,9 @@ class TableObject(object):
         self.reseed(salt="ran")
         candidates = [c for c in self.every
                       if c.rank >= 0 and c.intershuffle_valid]
+        if self.intershuffle_group is not None:
+            candidates = [c for c in candidates
+                          if c.intershuffle_group == self.intershuffle_group]
         for attribute in sorted(self.randomize_attributes):
             chosen = random.choice(candidates)
             setattr(self, attribute, chosen.old_data[attribute])
@@ -1449,6 +1459,33 @@ class TableObject(object):
             random.shuffle(values)
             for attribute, value in zip(attributes, values):
                 setattr(self, attribute, value)
+
+    def randomselect(self, candidates=None):
+        if not hasattr(self, "randomselect_attributes"):
+            return
+
+        self.reseed("randsel")
+        if candidates is None:
+            candidates = [c for c in self.every if c.intershuffle_valid]
+        if self.intershuffle_group is not None:
+            candidates = [c for c in candidates
+                          if c.intershuffle_group == self.intershuffle_group]
+
+        if len(set([o.rank for o in candidates])) <= 1:
+            hard_shuffle = True
+        else:
+            hard_shuffle = False
+
+        for attributes in self.randomselect_attributes:
+            if hard_shuffle:
+                other = random.choice(candidates)
+            else:
+                other = self.get_similar(candidates)
+            if isinstance(attributes, str):
+                attributes = [attributes]
+            for attribute in attributes:
+                setattr(self, attribute, other.old_data[attribute])
+        self.random_selected = True
 
     @classmethod
     def intershuffle(cls, candidates=None, random_degree=None):
@@ -1492,30 +1529,14 @@ class TableObject(object):
                     setattr(a, attribute, bval)
 
     @classmethod
-    def randomselect(cls, candidates=None):
-        if not hasattr(cls, "randomselect_attributes"):
-            return
-
+    def randomselect_all(cls, candidates=None):
         if candidates is None:
             candidates = list(cls.every)
         candidates = [o for o in candidates
                       if o.rank >= 0 and o.intershuffle_valid]
-        if len(set([o.rank for o in candidates])) <= 1:
-            hard_shuffle = True
-        else:
-            hard_shuffle = False
 
         for o in candidates:
-            o.reseed("randsel")
-            for attributes in cls.randomselect_attributes:
-                if hard_shuffle:
-                    o2 = random.choice(candidates)
-                else:
-                    o2 = o.get_similar(candidates)
-                if isinstance(attributes, str):
-                    attributes = [attributes]
-                for attribute in attributes:
-                    setattr(o, attribute, o2.old_data[attribute])
+            o.randomselect(candidates=candidates)
             o.random_selected = True
 
     @classmethod
