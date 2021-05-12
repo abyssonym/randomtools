@@ -646,6 +646,10 @@ class TableObject(object):
         cls._every = list(get_table_objects(cls))
         return cls.every
 
+    @classproperty
+    def randomize_order(cls):
+        return cls.every
+
     @property
     def rank(self):
         return 1
@@ -1233,7 +1237,7 @@ class TableObject(object):
 
     @classmethod
     def mutate_all(cls):
-        for o in cls.every:
+        for o in cls.randomize_order:
             if hasattr(o, "mutated") and o.mutated:
                 continue
             o.reseed(salt="mut")
@@ -1246,7 +1250,7 @@ class TableObject(object):
 
     @classmethod
     def randomize_all(cls):
-        for o in cls.every:
+        for o in cls.randomize_order:
             if hasattr(o, "randomized") and o.randomized:
                 continue
             o.reseed(salt="ran")
@@ -1255,7 +1259,7 @@ class TableObject(object):
 
     @classmethod
     def shuffle_all(cls):
-        for o in cls.every:
+        for o in cls.randomize_order:
             if hasattr(o, "shuffled") and o.shuffled:
                 continue
             o.reseed(salt="shu")
@@ -1531,7 +1535,7 @@ class TableObject(object):
     @classmethod
     def randomselect_all(cls, candidates=None):
         if candidates is None:
-            candidates = list(cls.every)
+            candidates = list(cls.randomize_order)
         candidates = [o for o in candidates
                       if o.rank >= 0 and o.intershuffle_valid]
 
