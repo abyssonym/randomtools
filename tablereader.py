@@ -717,7 +717,8 @@ class TableObject(object):
         return score
 
     def get_similar(self, candidates=None, override_outsider=False,
-                    random_degree=None, allow_intershuffle_invalid=False):
+                    random_degree=None, allow_intershuffle_invalid=False,
+                    wide=False):
         if not (self.intershuffle_valid or allow_intershuffle_invalid):
             return self
 
@@ -763,7 +764,7 @@ class TableObject(object):
             index = random.choice([index, index-1])
             index = max(0, min(index, len(candidates)-1))
         index = mutate_normal(index, minimum=0, maximum=len(candidates)-1,
-                              random_degree=random_degree)
+                              random_degree=random_degree, wide=wide)
         chosen = candidates[index]
         if override_outsider:
             assert chosen is not self
