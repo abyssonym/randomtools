@@ -509,7 +509,7 @@ def shuffle_normal(candidates, random_degree=None, wide=False):
         new_indexes[c] = new_index
     if candidates and hasattr(candidates[0], "index"):
         shuffled = sorted(candidates,
-                          key=lambda c: (new_indexes[c], c.signature, c.index))
+                          key=lambda c: (new_indexes[c], c.signature))
     else:
         shuffled = sorted(candidates,
                           key=lambda c: (new_indexes[c], random.random(), c))
@@ -656,11 +656,18 @@ class TableObject(object):
 
     @cached_property
     def ranked_ratio(self):
+        if hasattr(self, '_ranked_ratio'):
+            return self._ranked_ratio
+
+        for o in self.every:
+            o._ranked_ratio = None
+
         ranked = [o for o in self.ranked if o.rank >= 0]
-        if self not in ranked:
-            return None
-        index = ranked.index(self)
-        return index / float(len(ranked)-1)
+        for (i, o) in enumerate(ranked):
+            ratio = i / float(len(ranked)-1)
+            o._ranked_ratio = ratio
+
+        return self.ranked_ratio
 
     @property
     def mutate_valid(self):
@@ -687,7 +694,7 @@ class TableObject(object):
         if hasattr(cls, '_ranked'):
             return cls._ranked
         ranked = sorted(cls.every,
-                        key=lambda c: (c.rank, c.signature, c.index))
+                        key=lambda c: (c.rank, c.signature))
         cls._ranked = ranked
         return cls.ranked
 
@@ -741,7 +748,7 @@ class TableObject(object):
                 candidates = [c for c in candidates if c.intershuffle_valid]
 
             candidates = sorted(set(candidates),
-                                key=lambda c: (c.rank, c.signature, c.index))
+                                key=lambda c: (c.rank, c.signature))
             if self.intershuffle_group is not None:
                 candidates = [
                     c for c in candidates
@@ -789,7 +796,7 @@ class TableObject(object):
         if candidates is None:
             candidates = [c for c in cls.every if c.rank >= 0]
         candidates = sorted(set(candidates),
-                            key=lambda c: (c.rank, c.signature, c.index))
+                            key=lambda c: (c.rank, c.signature))
         random.shuffle(sorted(current, key=lambda c: c.index))
         chosens = []
         for c in current:
@@ -1207,9 +1214,13 @@ class TableObject(object):
 
     @cached_property
     def signature(self):
-        s = "%s%s%s" % (
-            get_seed(), self.index, self.__class__.__name__)
-        return md5(s.encode('ascii')).hexdigest()
+        identifier = '%s%s' % (self.filename, self.pointer)
+        left = '%s%s%s' % (
+            get_seed(), identifier, self.__class__.__name__)
+        right = '%s%s' % (self.index, get_seed())
+        left = md5(left.encode('ascii')).hexdigest()
+        right = md5(right.encode('ascii')).hexdigest()
+        return '%s%s%s%x' % (left, identifier, right, self.index)
 
     def reseed(self, salt=""):
         s = "%s%s%s%s" % (
@@ -1531,7 +1542,7 @@ class TableObject(object):
                 random.shuffle(shuffled)
             else:
                 candidates = sorted(
-                    candidates, key=lambda c: (c.rank, c.signature, c.index))
+                    candidates, key=lambda c: (c.rank, c.signature))
                 shuffled = shuffle_normal(candidates,
                                           random_degree=random_degree)
 
