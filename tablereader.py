@@ -684,8 +684,12 @@ class TableObject(object):
 
     @classproperty
     def ranked(cls):
-        return sorted(cls.every,
-                      key=lambda c: (c.rank, c.signature, c.index))
+        if hasattr(cls, '_ranked'):
+            return cls._ranked
+        ranked = sorted(cls.every,
+                        key=lambda c: (c.rank, c.signature, c.index))
+        cls._ranked = ranked
+        return cls.ranked
 
     def assert_unchanged(self):
         for attr in self.old_data:
@@ -718,49 +722,58 @@ class TableObject(object):
 
     def get_similar(self, candidates=None, override_outsider=False,
                     random_degree=None, allow_intershuffle_invalid=False,
-                    wide=False):
+                    wide=False, presorted=False):
         if not (self.intershuffle_valid or allow_intershuffle_invalid):
             return self
-
         if self.rank < 0:
             return self
+
         if random_degree is None:
             random_degree = self.random_degree
 
         if candidates is None:
-            candidates = [c for c in self.every if c.rank >= 0]
+            candidates = [c for c in self.ranked if c.rank >= 0]
         else:
             assert all([c.rank >= 0 for c in candidates])
 
-        if not allow_intershuffle_invalid:
-            candidates = [c for c in candidates if c.intershuffle_valid]
+        if not presorted:
+            if not allow_intershuffle_invalid:
+                candidates = [c for c in candidates if c.intershuffle_valid]
 
-        candidates = sorted(set(candidates),
-                            key=lambda c: (c.rank, c.signature, c.index))
-        if self.intershuffle_group is not None:
-            candidates = [c for c in candidates
-                          if c.intershuffle_group == self.intershuffle_group]
+            candidates = sorted(set(candidates),
+                                key=lambda c: (c.rank, c.signature, c.index))
+            if self.intershuffle_group is not None:
+                candidates = [
+                    c for c in candidates
+                    if c.intershuffle_group == self.intershuffle_group]
 
         if len(candidates) <= 0:
             raise Exception("No candidates for get_similar")
 
-        if override_outsider and self not in candidates:
-            index = len([c for c in candidates if c.rank < self.rank])
-            index2 = len([c for c in candidates if c.rank <= self.rank])
-            if index2 > index:
-                index = random.randint(index, index2)
-            candidates.insert(index, self)
-        elif self not in candidates:
-            raise Exception("Must manually override outsider elements.")
+        if self not in candidates:
+            if override_outsider:
+                index, index2 = 0, 0
+                for (i, c) in enumerate(candidates):
+                    if c.rank < self.rank:
+                        index = i
+                    elif c.rank <= self.rank:
+                        index2 = i
+                    elif c.rank > self.rank:
+                        break
+                if index2 and index2 > index:
+                    index = random.randint(index, index2)
+            else:
+                raise Exception("Must manually override outsider elements.")
         else:
             override_outsider = False
+            index = candidates.index(self)
 
-        if len(candidates) <= 1:
+        if not candidates:
+            return self
+        elif len(candidates) == 1:
             return candidates[0]
 
-        index = candidates.index(self)
         if override_outsider:
-            candidates.remove(self)
             index = random.choice([index, index-1])
             index = max(0, min(index, len(candidates)-1))
         index = mutate_normal(index, minimum=0, maximum=len(candidates)-1,
