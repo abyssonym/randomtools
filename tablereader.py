@@ -704,6 +704,10 @@ class TableObject(object):
                 raise AssertionError('{0} {1} attribute "{2}" changed.'.format(
                     self.__class__.__name__, ("%x" % self.index), attr))
 
+    def clear_cache(self):
+        if hasattr(self, '_property_cache'):
+            del(self._property_cache)
+
     def get_bit_similarity_score(self, other, bitmasks=None):
         if bitmasks is None:
             bitmasks = self.bit_similarity_attributes

@@ -17,6 +17,25 @@ def cached_property(fn):
     return cacher
 
 
+class classproperty(property):
+    def __get__(self, inst, cls):
+        return self.fget(cls)
+
+
+def clached_property(fn):
+    @classproperty
+    def cacher(self):
+        if not hasattr(self, '_class_property_cache'):
+            self._class_property_cache = {}
+
+        if fn.__name__ not in self._class_property_cache:
+            self._class_property_cache[fn.__name__] = fn(self)
+
+        return self._class_property_cache[fn.__name__]
+
+    return cacher
+
+
 def md5hash(filename, blocksize=65536):
     m = md5()
     with open(filename, 'rb') as f:
@@ -462,8 +481,3 @@ def rewrite_snes_checksum(filename, lorom=False):
     f.seek(0xFFDC & rommask)
     write_multi(f, checksum ^ 0xFFFF, length=2)
     f.close()
-
-
-class classproperty(property):
-    def __get__(self, inst, cls):
-        return self.fget(cls)
