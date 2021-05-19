@@ -36,6 +36,19 @@ def clached_property(fn):
     return cacher
 
 
+def read_lines_nocomment(filename):
+    lines = []
+    with open(filename) as f:
+        for line in f:
+            if '#' in line:
+                line, _ = line.split('#', 1)
+            line = line.strip()
+            if not line:
+                continue
+            lines.append(line)
+    return lines
+
+
 def md5hash(filename, blocksize=65536):
     m = md5()
     with open(filename, 'rb') as f:
