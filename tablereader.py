@@ -1,6 +1,6 @@
 from .psx_file_extractor import FileManager, SANDBOX_PATH
 from .utils import (read_multi, write_multi, classproperty,
-                    random, md5hash, cached_property)
+                    random, md5hash, cached_property, clached_property)
 from functools import total_ordering
 from os import path
 from hashlib import md5
@@ -689,14 +689,10 @@ class TableObject(object):
     def catalogue_index(self):
         return self.index
 
-    @classproperty
+    @clached_property
     def ranked(cls):
-        if hasattr(cls, '_ranked'):
-            return cls._ranked
-        ranked = sorted(cls.every,
-                        key=lambda c: (c.rank, c.signature))
-        cls._ranked = ranked
-        return cls.ranked
+        return sorted(cls.every,
+                      key=lambda c: (c.rank, c.signature))
 
     def assert_unchanged(self):
         for attr in self.old_data:
@@ -744,8 +740,8 @@ class TableObject(object):
 
         if candidates is None:
             candidates = [c for c in self.ranked if c.rank >= 0]
-        else:
-            assert all([c.rank >= 0 for c in candidates])
+        elif not presorted:
+            assert all(c.rank >= 0 for c in candidates)
 
         if not presorted:
             if not allow_intershuffle_invalid:
