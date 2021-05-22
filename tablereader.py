@@ -1418,6 +1418,8 @@ class TableObject(object):
 
             candidates = list(self._candidates_dict[attributes])
             candidates += [dict(wildcard)]
+            if obj_to_dict(self) not in candidates:
+                candidates += [obj_to_dict(self)]
             candidates = sorted(
                 candidates, key=lambda o: (
                     self.get_bit_similarity_score(o, bitmasks=bitmasks),
