@@ -95,10 +95,11 @@ def get_patchdicts(filename):
 
 
 def get_patches(directory, config_file):
+    patch_filepath = path.join(directory, config_file)
     try:
-        f = open(path.join(directory, config_file))
-    except IOError:
-        print("WARNING: patches.cfg file not found.")
+        f = open(patch_filepath)
+    except FileNotFoundError:
+        print("WARNING: File not found - %s" % patch_filepath)
         return []
 
     xmlfilenames = defaultdict(set)
@@ -148,9 +149,9 @@ def patch_patch(directory, patchdict, verify=False):
         varvals = patchdict['varvals']
 
     if not verify:
-        print("APPLYING PATCH: %s" % patchdict['name'])
+        print("Applying patch: %s" % patchdict['name'])
     elif verify:
-        print("VERIFYING PATCH: %s" % patchdict['name'])
+        print("Verifying patch: %s" % patchdict['name'])
 
     for location in patchdict['locations'] + patchdict['variables']:
         offset = location['offset']
@@ -168,7 +169,7 @@ def patch_patch(directory, patchdict, verify=False):
                 raise Exception("No value given for variable: %s %s" %
                                 (patchdict['name'], location['name']))
             if not verify:
-                print('-- VARIABLE:', location['name'], value)
+                print('-- Variable:', location['name'], value)
             to_write = value.to_bytes(length, byteorder='little')
             assert len(to_write) == length
         else:
