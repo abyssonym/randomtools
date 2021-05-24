@@ -1214,7 +1214,8 @@ class TableObject(object):
 
     @cached_property
     def signature(self):
-        identifier = '%s%s' % (self.filename, self.pointer)
+        filename = '/'.join(self.filename.split(path.sep))
+        identifier = '%s%s' % (filename, self.pointer)
         left = '%s%s%s' % (
             get_seed(), identifier, self.__class__.__name__)
         right = '%s%s' % (self.index, get_seed())
