@@ -1,4 +1,5 @@
 from collections import defaultdict
+from difflib import SequenceMatcher
 from os import path
 from sys import argv
 from xml.etree import ElementTree
@@ -111,7 +112,7 @@ def get_patches(directory, config_file):
             while '  ' in line:
                 line = line.replace('  ', ' ')
             if line[0] == ' ':
-                variable, value = line.strip().split()
+                variable, value = line.strip().rsplit(' ', 1)
                 value = int(value)
                 varvals[xmlfilename, patchname] = variable, value
                 continue
@@ -183,8 +184,23 @@ def patch_patch(directory, patchdict, verify=False):
         if verify:
             patched_data = to_patch.read(length)
             if patched_data != to_write:
-                raise Exception("Verification failed: %s %s"
-                                % (patchdict['name'], location['offset']))
+                to_write_var = to_write
+                for varloc in patchdict['variables']:
+                    varoffset = varloc['offset']
+                    varlength = varloc['bytes']
+                    varname = varloc['name']
+                    if offset <= varoffset < offset + length:
+                        middle = varoffset - offset
+                        if varname in varvals:
+                            varval = varvals[varname]
+                        else:
+                            varval = varloc['default']
+                        data = varval.to_bytes(varlength, byteorder='little')
+                        to_write_var = (to_write_var[:middle] + data +
+                                        to_write_var[middle+varlength:])
+                if patched_data != to_write_var:
+                    raise Exception("Verification failed: %s %s"
+                                    % (patchdict['name'], location['offset']))
 
         if not verify:
             to_patch.write(to_write)
