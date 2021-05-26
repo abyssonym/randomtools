@@ -981,7 +981,7 @@ class TableObject(object):
             if isinstance(value, int):
                 value = "%x" % value
 
-            s.append((attr, "%s" % value))
+            s.append((attr, "%s" % str(value)))
 
         s = ", ".join(["%s: %s" % (a, b) for (a, b) in s])
         s = "%x - %s" % (self.index, s)
