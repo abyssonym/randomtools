@@ -301,7 +301,7 @@ def write_patch(outfile, patchfilename, noverify=None, force=False):
 
             if patchdict is validation:
                 validate = f.read(len(code))
-                if validate != code:
+                if validate != code[:len(validate)]:
                     error = ('Patch %s-%x did not pass validation.'
                              % (patchfilename, address))
                     if noverify:
