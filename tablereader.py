@@ -96,6 +96,10 @@ def reimport_psx_files():
     PSX_FILE_MANAGER.finish()
 
 
+def set_global_label(label):
+    global GLOBAL_LABEL
+    GLOBAL_LABEL = label
+
 def get_global_label():
     global GLOBAL_LABEL
     return GLOBAL_LABEL
@@ -154,7 +158,7 @@ def determine_global_table(outfile, interactive=True):
     else:
         return None
 
-    GLOBAL_LABEL = label
+    set_global_label(label)
     set_global_table_filename(filename)
     return GLOBAL_LABEL
 
