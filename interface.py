@@ -1,5 +1,5 @@
 from sys import argv
-from os import stat, listdir
+from os import stat, listdir, path
 import string
 from time import time
 from shutil import copyfile
@@ -98,10 +98,11 @@ def snescopy(sourcefile, outfile):
 def write_cue_file():
     filename = get_outfile()
     cue_filename = '.'.join(filename.split('.')[:-1] + ['cue'])
+    head, tail = path.split(filename)
     f = open(cue_filename, 'w+')
     f.write('FILE "{0}" BINARY\n\n'
             'TRACK 01 MODE2/2352\n\n'
-            'INDEX 01 00:00:00\n'.format(filename))
+            'INDEX 01 00:00:00\n'.format(tail))
     f.close()
 
 
