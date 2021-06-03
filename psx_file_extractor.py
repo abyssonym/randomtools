@@ -2,7 +2,7 @@ from math import ceil
 from os import makedirs, path, stat, environ
 from string import printable
 from sys import argv
-from .utils import read_multi, write_multi
+from .utils import cached_property
 from .cdrom_ecc import get_edc_ecc
 
 
@@ -101,7 +101,7 @@ def write_data_to_sectors(imgname, initial_sector, datafile=None,
         submode = (eof | rt | form | trigger | data | audio | video | eor)
         f.seek(pointer+0x12)
         old_submode = ord(f.read(1))
-        if submode & 0x7E != old_submode & 0x7E:
+        if DEBUG and submode & 0x7E != old_submode & 0x7E:
             print("WARNING! Submode differs on sector %s: %x -> %x" % (
                 sector_index, old_submode, submode))
 
@@ -180,8 +180,8 @@ class FileManager(object):
             f = files.pop(0)
             if f.is_directory:
                 new_files = f.files
+                directories.append(f)
                 if new_files is not None:
-                    directories.append(f)
                     files.extend(new_files)
         return directories
 
@@ -202,10 +202,20 @@ class FileManager(object):
             f.write_data()
 
     def get_file(self, name):
+        if not hasattr(self, '_name_cache'):
+            self._name_cache = {}
+
+        if not name.endswith(';1'):
+            name = name + ';1'
+
+        if name in self._name_cache:
+            return self._name_cache[name]
+
         filepath = path.join(self.dirname, name)
         for f in self.flat_files:
-            if f.__repr__() == filepath:
-                return f
+            if f.path == filepath:
+                self._name_cache[name] = f
+                return self.get_file(name)
 
     def export_file(self, name, filepath=None):
         if not name.endswith(';1'):
@@ -221,34 +231,135 @@ class FileManager(object):
         f.write_data(filepath)
         return filepath
 
+    def calculate_free(self):
+        max_size = stat(self.imgname).st_size
+        max_sectors = max_size // 0x930
+
+        used_sectors = set()
+        for f in self.flat_files:
+            num_sectors = ceil(f.num_sectors)
+            num_sectors = max(num_sectors, 1)
+            used_sectors |= set(range(f.target_sector,
+                                      f.target_sector+num_sectors))
+
+        last_sector = max_size // 0x930
+        unused_sectors = set(range(max_sectors)) - used_sectors
+
+        final_unused_sectors = []
+        with open(self.imgname, 'rb') as f:
+            previous_unused = -999
+            for sector in sorted(unused_sectors):
+                pointer = (sector * 0x930) + 0x18
+                f.seek(pointer)
+                block = f.read(0x800)
+                if set(block) in ({0}, {0xff}):
+                    if sector == previous_unused + 1:
+                        final_unused_sectors[-1].append(sector)
+                    else:
+                        final_unused_sectors.append([sector])
+                    previous_unused = sector
+
+        self._free_sectors = final_unused_sectors
+
+    def get_free(self, num_sectors):
+        if not hasattr(self, '_free_sectors'):
+            self.calculate_free()
+
+        candidates = [
+            sectors for sectors in sorted(self._free_sectors,
+                                          key=lambda s: (len(s), s[0]))
+            if len(sectors) >= num_sectors]
+        chosen = candidates[0]
+        self._free_sectors.remove(chosen)
+        new_target_sector = chosen[0]
+        used, unused = chosen[:num_sectors], chosen[num_sectors:]
+        assert len(used) == num_sectors
+        if unused:
+            self._free_sectors.append(unused)
+
+        return new_target_sector
+
+    def realign_entry_pointers(self):
+        all_files = self.flat_directories + self.flat_files
+        initial_sectors = {f.initial_sector for f in all_files}
+        for initial_sector in sorted(initial_sectors):
+            files = [f for f in all_files
+                     if f.initial_sector == initial_sector]
+            files = sorted(files, key=lambda f: f.pointer
+                                                if f.pointer is not None
+                                                else 0xffffffff)
+            pointer = 0
+            highest_old_pointer = 0
+            highest_pointer = 0
+            for f in files:
+                old_sector = pointer // 0x800
+                new_sector = (pointer + f.size) // 0x800
+                if new_sector == old_sector + 1:
+                    pointer = new_sector * 0x800
+                else:
+                    assert new_sector == old_sector
+
+                if f.pointer is not None:
+                    highest_old_pointer = max(highest_old_pointer, f.pointer)
+
+                f.pointer = pointer
+                highest_pointer = max(highest_pointer, f.pointer)
+                pointer += f.size
+                f.update_file_entry()
+
+            assert highest_old_pointer // 0x800 == highest_pointer // 0x800
+
+    def create_new_file(self, name, template):
+        template.initial_sector
+        template.target_sector
+        new_file = FileEntry(template.imgname, None, template.dirname,
+                             template.initial_sector)
+        new_file.clone_entry(template)
+        head, tail = path.split(name)
+        new_file.name = tail
+        new_file._size = new_file.size
+        self._flat_files.append(new_file)
+        self.realign_entry_pointers()
+        return new_file
+
     def import_file(self, name, filepath=None, new_target_sector=None,
-                    force_recalc=False, verify=False):
+                    force_recalc=False, verify=False, template=None):
         if not name.endswith(';1'):
             name = name + ';1'
         if filepath is None:
             filepath = path.join(self.dirname, name)
+        if filepath.endswith(';1'):
+            filepath = filepath[:-2]
+
+        new_size = ceil(stat(filepath).st_size / 0x800)
+        new_size = max(new_size, 1)
         old_file = self.get_file(name)
 
-        size_bytes = stat(filepath).st_size
-
-        verify = verify or DEBUG
-        if (new_target_sector is not None
-                or ceil(size_bytes / 0x800) > ceil(old_file.filesize / 0x800)):
-            verify = True
+        if old_file is not None:
+            to_import = old_file
+            if new_target_sector is None:
+                old_size = ceil(old_file.filesize / 0x800)
+                if new_size <= old_size:
+                    new_target_sector = old_file.target_sector
+            else:
+                verify = True
+        else:
+            assert template
+            to_import = self.create_new_file(name, template=template)
 
         if new_target_sector is None:
-            new_target_sector = old_file.target_sector
+            new_target_sector = self.get_free(new_size)
+            verify = True
+
+        assert new_target_sector is not None
+        verify = verify or DEBUG
 
         if verify:
-            size_sectors = size_bytes / 0x800
-            if size_bytes > size_sectors * 0x800:
-                size_sectors += 1
-            size_sectors = max(size_sectors, 1)
-            end_sector = new_target_sector + size_sectors
+            end_sector = new_target_sector + new_size
 
             self_path = path.join(self.dirname, name)
             for f in self.flat_files:
-                if f.__repr__() == self_path:
+                if f.path == self_path:
                     continue
                 try:
                     if f.start_sector <= new_target_sector:
@@ -258,12 +369,14 @@ class FileManager(object):
                 except AssertionError:
                     raise Exception("Conflict with %s" % f)
 
-        old_file.target_sector = new_target_sector
-        old_file.filesize = size_bytes
-        old_file.update_file_entry()
+        to_import.target_sector = new_target_sector
+        to_import.filesize = new_size * 0x800
+        to_import.update_file_entry()
         write_data_to_sectors(
-            old_file.imgname, old_file.target_sector, datafile=filepath,
+            to_import.imgname, to_import.target_sector, datafile=filepath,
             force_recalc=force_recalc)
+
+        return to_import
 
     def finish(self):
         FileEntry.write_cached_files()
@@ -274,12 +387,35 @@ class FileEntryReadException(Exception):
 
 
 class FileEntry:
+    STRUCT = [
+        ('_size', 1),
+        ('num_ear', 1),
+        ('target_sector', 4),
+        ('target_sector_reverse', 4),
+        ('filesize', 4),
+        ('filesize_reverse', 4),
+        ('year', 1),
+        ('month', 1),
+        ('day', 1),
+        ('hour', 1),
+        ('minute', 1),
+        ('second', 1),
+        ('tz_offset', 1),
+        ('flags', 1),
+        ('interleaved_unit_size', 1),
+        ('interleaved_gap_size', 1),
+        ('one', 2),
+        ('unk3', 2),
+        ('name_length', 1),
+        ('name', None),
+        ('pattern', 14),
+        ]
+
     def __init__(self, imgname, pointer, dirname, initial_sector):
         self.imgname = imgname
         self.pointer = pointer
         self.dirname = dirname
         self.initial_sector = initial_sector
-        self.read_data()
 
     def __repr__(self):
         return self.path
@@ -304,6 +440,18 @@ class FileEntry:
         if self.filesize > num_sectors * 0x800:
             num_sectors += 1
         return max(num_sectors, 1)
+
+    @property
+    def hidden(self):
+        return self.flags & 1
+
+    @property
+    def is_directory(self):
+        return self.flags & 0x2
+
+    @cached_property
+    def path(self):
+        return path.join(self.dirname, self.name)
 
     @classmethod
     def get_cached_file_from_sectors(self, imgname, initial_sector):
@@ -332,64 +480,97 @@ class FileEntry:
             f.close()
             write_data_to_sectors(imgname, initial_sector, datafile=fname)
 
-    def update_file_entry(self):
-        f = self.get_cached_file_from_sectors(self.imgname,
-                                              self.initial_sector)
+    @property
+    def size(self):
+        size = 0
+        for (attr, length) in self.STRUCT:
+            if length is not None:
+                size += length
+            else:
+                assert attr == 'name'
+                size += len(self.name)
+                if not len(self.name) % 2:
+                    size += 1
+        return size
 
-        f.seek(self.pointer+2)
-        write_multi(f, self.target_sector, length=4)
-        f.seek(self.pointer+6)
-        write_multi(f, self.target_sector, length=4, reverse=False)
-        f.seek(self.pointer+10)
-        write_multi(f, self.filesize, length=4)
-        f.seek(self.pointer+14)
-        write_multi(f, self.filesize, length=4, reverse=False)
-
-    def read_data(self):
-        f = self.get_cached_file_from_sectors(self.imgname,
-                                              self.initial_sector)
-        f.seek(self.pointer)
-        peek = f.read(1)
-        if not peek:
-            raise EOFError
-        self.size = ord(peek)
-        if self.size == 0:
-            raise FileEntryReadException
-        self.num_ear = ord(f.read(1))
+    def validate(self):
         assert self.num_ear == 0
         assert not self.size % 2
-        self.target_sector = read_multi(f, length=4)
-        f.seek(4, 1)
-        self.filesize = read_multi(f, length=4)
-        f.seek(4, 1)
-        self.year = ord(f.read(1)) + 1900
-        self.month = ord(f.read(1))
-        self.day = ord(f.read(1))
-        self.hour = ord(f.read(1))
-        self.minute = ord(f.read(1))
-        self.second = ord(f.read(1))
-        self.tz_offset = ord(f.read(1)) / 4.0
-        self.flags = ord(f.read(1))
         assert not self.flags & 0xFC
-        self.hidden = self.flags & 1
-        self.is_directory = self.flags & 0x2
-        self.interleaved_unit_size = ord(f.read(1))
-        self.interleaved_gap_size = ord(f.read(1))
         assert not self.interleaved_unit_size or self.interleaved_gap_size
-        self.one = read_multi(f, length=2)
         assert self.one == 1
-        f.seek(2, 1)
-        self.name_length = ord(f.read(1))
-        self.name = f.read(self.name_length).decode('ascii')
-        self.path = path.join(self.dirname, self.name)
-        if not self.name_length % 2:
-            p = ord(f.read(1))
-            assert p == 0
-        self.pattern = f.read(14)
         if self.is_directory:
             assert self.pattern == DIRECTORY_PATTERN
         else:
             assert self.name[-2:] == ";1"
+        if hasattr(self, '_size'):
+            assert self.size == self._size
+
+    def clone_entry(self, other):
+        for attr, length in self.STRUCT:
+            setattr(self, attr, getattr(other, attr))
+
+    def update_file_entry(self):
+        self.validate()
+        self._size = self.size
+
+        f = self.get_cached_file_from_sectors(self.imgname,
+                                              self.initial_sector)
+
+        f.seek(self.pointer)
+        for (attr, length) in self.STRUCT:
+            if attr == 'target_sector_reverse':
+                f.write(self.target_sector.to_bytes(length=4, byteorder='big'))
+            elif attr == 'filesize_reverse':
+                f.write(self.filesize.to_bytes(length=4, byteorder='big'))
+            elif attr == 'name_length':
+                name_length = len(self.name)
+                f.write(bytes([name_length]))
+                self.name_length = name_length
+            elif attr == 'name':
+                f.write(self.name.encode('ascii'))
+                if not self.name_length % 2:
+                    f.write(b'\x00')
+            elif attr == 'pattern':
+                f.write(self.pattern)
+            else:
+                value = getattr(self, attr)
+                f.write(value.to_bytes(length=length, byteorder='little'))
+
+        assert f.tell() == self.pointer + self.size
+
+    def read_file_entry(self):
+        self.old_data = {}
+
+        f = self.get_cached_file_from_sectors(self.imgname,
+                                              self.initial_sector)
+        f.seek(self.pointer)
+        for (attr, length) in self.STRUCT:
+            if length == None and attr == 'name':
+                length = self.name_length
+                self.name = f.read(length).decode('ascii')
+                if not self.name_length % 2:
+                    p = f.read(1)
+                    assert p == b'\x00'
+
+            elif attr == 'pattern':
+                self.pattern = f.read(length)
+
+            elif attr == '_size':
+                peek = f.read(1)
+                if len(peek) == 0:
+                    raise EOFError
+                self._size = ord(peek)
+                if self._size == 0:
+                    raise FileEntryReadException
+
+            else:
+                value = int.from_bytes(f.read(length), byteorder='little')
+                setattr(self, attr, value)
+
+            self.old_data[attr] = getattr(self, attr)
+
+        self.validate()
         assert f.tell() == self.pointer + self.size
 
     def write_data(self, filepath=None):
@@ -431,6 +612,7 @@ def read_directory(imgname, dirname, sector_index=None,
     while True:
         try:
             fe = FileEntry(imgname, pointer, dirname, sector_index)
+            fe.read_file_entry()
             pointer = fe.pointer + fe.size
             fes.append(fe)
         except FileEntryReadException:
@@ -440,9 +622,7 @@ def read_directory(imgname, dirname, sector_index=None,
 
     for fe in fes:
         fe.files = None
-        if not fe.printable_name:
-            continue
-        if fe.is_directory and fe.name and sector_index != fe.target_sector:
+        if fe.is_directory and fe.printable_name and sector_index != fe.target_sector:
             subfes = read_directory(
                 imgname, path.join(dirname, fe.name),
                 sector_index=fe.target_sector)

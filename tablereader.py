@@ -76,6 +76,12 @@ def create_psx_file_manager(outfile):
     PSX_FILE_MANAGER = FileManager(outfile, SANDBOX_PATH)
 
 
+def get_psx_file_manager():
+    global PSX_FILE_MANAGER
+    assert PSX_FILE_MANAGER is not None
+    return PSX_FILE_MANAGER
+
+
 def reimport_psx_files():
     if not SANDBOX_PATH:
         return
