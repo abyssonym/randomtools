@@ -208,6 +208,9 @@ class FileManager(object):
         if not name.endswith(';1'):
             name = name + ';1'
 
+        if name.startswith(SANDBOX_PATH):
+            name = name[len(SANDBOX_PATH):].lstrip(path.sep)
+
         if name in self._name_cache:
             return self._name_cache[name]
 
@@ -280,6 +283,9 @@ class FileManager(object):
         return new_target_sector
 
     def realign_entry_pointers(self):
+        if hasattr(self, 'SKIP_REALIGNMENT') and self.SKIP_REALIGNMENT:
+            return
+
         all_files = self.flat_directories + self.flat_files
         initial_sectors = {f.initial_sector for f in all_files}
         for initial_sector in sorted(initial_sectors):
@@ -371,7 +377,11 @@ class FileManager(object):
 
         to_import.target_sector = new_target_sector
         to_import.filesize = new_size * 0x800
-        to_import.update_file_entry()
+        if to_import.pointer is None:
+            assert hasattr(self, 'SKIP_REALIGNMENT')
+            assert self.SKIP_REALIGNMENT
+        else:
+            to_import.update_file_entry()
         write_data_to_sectors(
             to_import.imgname, to_import.target_sector, datafile=filepath,
             force_recalc=force_recalc)
@@ -512,6 +522,7 @@ class FileEntry:
 
     def update_file_entry(self):
         self.validate()
+
         self._size = self.size
 
         f = self.get_cached_file_from_sectors(self.imgname,
@@ -587,7 +598,7 @@ class FileEntry:
             f = file_from_sectors(self.imgname, self.target_sector, filepath)
             f.close()
         except AssertionError:
-            print("EXCEPTION: %s" % filepath)
+            print("WRITE EXCEPTION: %s" % filepath)
             return
 
 
@@ -622,7 +633,8 @@ def read_directory(imgname, dirname, sector_index=None,
 
     for fe in fes:
         fe.files = None
-        if fe.is_directory and fe.printable_name and sector_index != fe.target_sector:
+        if (fe.is_directory and fe.printable_name
+                and sector_index != fe.target_sector):
             subfes = read_directory(
                 imgname, path.join(dirname, fe.name),
                 sector_index=fe.target_sector)
