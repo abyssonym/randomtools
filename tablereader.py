@@ -38,12 +38,14 @@ SEED = None
 PSX_FILE_MANAGER = None
 OPEN_FILES = {}
 ALL_FILES = set()
+REMOVED_FILES = set()
 MAX_OPEN_FILE_COUNT = 100
 
 
 def get_open_file(filepath, sandbox=False):
     filepath = filepath.replace('/', path.sep)
     filepath = filepath.replace('\\', path.sep)
+    assert filepath not in REMOVED_FILES
     if sandbox and not filepath.startswith(SANDBOX_PATH):
         filepath = path.join(SANDBOX_PATH, filepath)
     if filepath in OPEN_FILES:
@@ -69,6 +71,13 @@ def close_file(filepath):
     if filepath in OPEN_FILES:
         OPEN_FILES[filepath].close()
         del(OPEN_FILES[filepath])
+
+
+def remove_unused_file(filepath):
+    close_file(filepath)
+    REMOVED_FILES.add(filepath)
+    if filepath in ALL_FILES:
+        ALL_FILES.remove(filepath)
 
 
 def create_psx_file_manager(outfile):
