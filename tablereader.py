@@ -231,6 +231,8 @@ def patch_filename_to_bytecode(patchfilename):
         else:
             if '@' in address:
                 address, filename = address.split('@')
+                filename = filename.replace('/', path.sep)
+                filename = filename.replace('\\', path.sep)
             address = int(address, 0x10)
         code = code.strip()
         while '  ' in code:
@@ -1660,6 +1662,8 @@ def get_table_objects(objtype, filename=None):
             line = line.split()[0]
             if '@' in line:
                 pointer, obj_filename = line.split('@')
+                obj_filename = obj_filename.replace('/', path.sep)
+                obj_filename = obj_filename.replace('\\', path.sep)
                 obj_filename = path.join(SANDBOX_PATH, obj_filename)
             else:
                 pointer = line
@@ -1830,6 +1834,8 @@ def set_table_specs(objects, filename=None):
         if pointer is not None and isinstance(pointer, str):
             if '@' in pointer:
                 pointer, subfile = pointer.split('@')
+                subfile = subfile.replace('/', path.sep)
+                subfile = subfile.replace('\\', path.sep)
             if ',' in pointer:
                 pointers = map(lambda p: int(p, 0x10), pointer.split(','))
                 pointer = pointers[0]
