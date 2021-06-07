@@ -356,6 +356,7 @@ class FileManager(object):
         if new_target_sector is None:
             new_target_sector = self.get_free(new_size)
             verify = True
+            force_recalc = True
 
         assert new_target_sector is not None
         verify = verify or DEBUG
@@ -594,12 +595,8 @@ class FileEntry:
             if not path.exists(self.dirname):
                 makedirs(self.dirname)
 
-        try:
-            f = file_from_sectors(self.imgname, self.target_sector, filepath)
-            f.close()
-        except AssertionError:
-            print("WRITE EXCEPTION: %s" % filepath)
-            return
+        f = file_from_sectors(self.imgname, self.target_sector, filepath)
+        f.close()
 
 
 def read_directory(imgname, dirname, sector_index=None,
