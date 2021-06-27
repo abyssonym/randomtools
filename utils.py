@@ -494,3 +494,31 @@ def rewrite_snes_checksum(filename, lorom=False):
     f.seek(0xFFDC & rommask)
     write_multi(f, checksum ^ 0xFFFF, length=2)
     f.close()
+
+
+def map_to_lorom(address):
+    base = ((address << 1) & 0xFFFF0000)
+    lorom_address = base | 0x8000 | (address & 0x7FFF)
+    return lorom_address
+
+
+def map_from_lorom(lorom_address):
+    lorom_address &= 0x7FFFFF
+    base = (lorom_address >> 1) & 0xFFFF8000
+    address = base | (lorom_address & 0x7FFF)
+    assert lorom_address == map_to_lorom(address)
+    return address
+
+
+def map_to_snes(address, lorom=False):
+    if lorom:
+        return map_to_lorom(address)
+    assert not address & 0xFFC00000
+    return address | 0xC00000
+
+
+def map_from_snes(address, lorom=False):
+    if lorom:
+        return map_from_lorom(address)
+    assert address & 0xC00000 == 0xC00000
+    return address & 0x3FFFFF
