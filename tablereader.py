@@ -94,6 +94,8 @@ def get_psx_file_manager():
 def reimport_psx_files():
     if not SANDBOX_PATH:
         return
+    if not PSX_FILE_MANAGER:
+        return
     last_import = -1
     for (n, filepath) in enumerate(sorted(ALL_FILES)):
         if filepath.startswith(SANDBOX_PATH):
