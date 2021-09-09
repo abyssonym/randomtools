@@ -40,6 +40,7 @@ PATCH_FILENAMES = []
 ALREADY_PATCHED = set()
 OPTION_FILENAMES = []
 NOVERIFY_PATCHES = []
+NOVERIFY_LINES = []
 CMP_PATCH_FILENAMES = []
 RANDOM_DEGREE = 0.25
 DIFFICULTY = 1.0
@@ -587,6 +588,9 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
                     code = code.replace('%s,%s' % (name, length), replacement)
                     code = code.replace(name, replacement)
 
+            if code.endswith('?'):
+                code = code.rstrip('?')
+                NOVERIFY_LINES.append((patchfilename, address))
             code = code.split()
             temp = []
             for c in code:
@@ -769,6 +773,8 @@ def verify_patchlist(outfile, patchlist):
             continue
         patch, validation = patch_filename_to_bytecode(patchpath)
         for (address, filename), code in sorted(patch.items()):
+            if (patchpath, address) in NOVERIFY_LINES:
+                continue
             if filename is None:
                 f = get_open_file(outfile)
             else:
