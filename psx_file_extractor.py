@@ -14,6 +14,8 @@ SANDBOX_PATH = '_temp'
 
 DEBUG = environ.get('DEBUG')
 DELTA_FILE = environ.get('DELTA')
+IGNORE_BAD_DATA_TYPE = True
+SEEN_BAD_DATA_TYPE = False
 
 
 def file_from_sectors(imgname, initial_sector, tempname=None):
@@ -45,10 +47,21 @@ def file_from_sectors(imgname, initial_sector, tempname=None):
         eor = submode & 0x01
         #assert not rt
         assert not trigger
-        if not form:
-            assert data and not (audio or video)
-        else:
-            assert (audio or video) and not data
+        try:
+            if not form:
+                assert data and not (audio or video)
+            else:
+                assert (audio or video) and not data
+        except AssertionError:
+            global SEEN_BAD_DATA_TYPE
+            if not IGNORE_BAD_DATA_TYPE:
+                raise Exception(
+                    'Bad submode data type at sector {0}.'.format(
+                        sector_index))
+            elif not SEEN_BAD_DATA_TYPE:
+                print('WARNING: Bad submode data type at sector {0}.'.format(
+                    sector_index))
+                SEEN_BAD_DATA_TYPE = True
         f.seek(pointer+0x18)
         block = f.read(0x800)
         g.write(block)
@@ -194,7 +207,7 @@ class FileManager(object):
             filepath = str(f)[len(self.dirname):]
             if filepath.endswith(';1'):
                 filepath = filepath[:-2]
-            s += '{0:0>8x} {1:0>4x} {2}\n'.format(f.target_sector * 0x930, f.pointer, filepath)
+            s += '{0:0>8x} {1:0>4x} {2:0>7x} {3}\n'.format(f.target_sector * 0x930, f.pointer, f.size, filepath)
         return s.strip()
 
     def write_all(self):
@@ -556,6 +569,7 @@ class FileEntry:
 
         f = self.get_cached_file_from_sectors(self.imgname,
                                               self.initial_sector)
+
         f.seek(self.pointer)
         for (attr, length) in self.STRUCT:
             if length == None and attr == 'name':
@@ -597,6 +611,38 @@ class FileEntry:
 
         f = file_from_sectors(self.imgname, self.target_sector, filepath)
         f.close()
+
+        written_size = stat(filepath).st_size
+        assert not written_size % 0x800
+        start_byte = self.target_sector * 0x800
+        interval = (start_byte, start_byte + written_size)
+        start, finish = interval
+        if not hasattr(FileEntry, 'WRITTEN_INTERVALS'):
+            FileEntry.WRITTEN_INTERVALS = {}
+
+        assert filepath not in self.WRITTEN_INTERVALS
+        errmsg = 'WARNING: {0} overlaps {1} at {2:x}. Truncating {1}.'
+        for donepath in sorted(self.WRITTEN_INTERVALS):
+            donestart, donefinish = self.WRITTEN_INTERVALS[donepath]
+            if start <= donestart < finish:
+                # truncate this file
+                newfinish = donestart
+                newsize = newfinish - start
+                print(errmsg.format(donepath, filepath, newsize))
+                with open(filepath, 'r+b') as f:
+                    f.truncate(newsize)
+                finish = newfinish
+            if start < donefinish <= finish:
+                # truncate the other file
+                newfinish = start
+                newsize = newfinish - donestart
+                print(errmsg.format(filepath, donepath, newsize))
+                with open(donepath, 'r+b') as f:
+                    f.truncate(newsize)
+                assert newfinish >= donestart
+                self.WRITTEN_INTERVALS[donepath] = (donestart, newfinish)
+        assert finish >= start
+        self.WRITTEN_INTERVALS[filepath] = (start, finish)
 
 
 def read_directory(imgname, dirname, sector_index=None,
