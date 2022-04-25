@@ -107,7 +107,8 @@ def write_cue_file():
 
 
 def run_interface(objects, custom_degree=False, custom_difficulty=False,
-                  codes=None, snes=False):
+                  codes=None, snes=False, args=None, setup_only=False,
+                  override_outfile=None):
     global sourcefile, outfile, flags, user_input_flags
     global activated_codes, all_objects
 
@@ -117,7 +118,9 @@ def run_interface(objects, custom_degree=False, custom_difficulty=False,
         codes = {}
     activated_codes = set([])
 
-    args = list(argv)[:6]
+    if args is None:
+        args = list(argv)[:6]
+
     num_args = len(args)
     while len(args) < 6:
         args.append(None)
@@ -203,6 +206,9 @@ def run_interface(objects, custom_degree=False, custom_difficulty=False,
     while ".." in outfile:
         outfile = outfile.replace("..", ".")
 
+    if override_outfile is not None:
+        outfile = override_outfile
+
     try:
         print('Making copy of rom file...')
         if snes:
@@ -238,9 +244,18 @@ def run_interface(objects, custom_degree=False, custom_difficulty=False,
             e.strerror = ('%s; Did you include the filename extension? For '
                           'example, ".smc", ".sfc", or ".img". ' % e.strerror)
         raise e
+
     set_global_output_filename(outfile)
     determine_global_table(outfile)
     set_table_specs(objects)
+
+    if setup_only:
+        objects = sort_good_order(objects)
+        for o in objects:
+            o.every
+        for o in objects:
+            o.ranked
+        return
 
     custom_degree = custom_degree or random_degree is not None
     if custom_degree:
