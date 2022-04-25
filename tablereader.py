@@ -57,7 +57,8 @@ def get_open_file(filepath, sandbox=False):
         for openfp in list(OPEN_FILES):
             close_file(openfp)
 
-    if filepath.startswith(SANDBOX_PATH) and filepath not in ALL_FILES:
+    if (filepath.startswith(SANDBOX_PATH) and path.sep in filepath
+            and filepath not in ALL_FILES):
         name = filepath[len(SANDBOX_PATH):].lstrip(path.sep)
         PSX_FILE_MANAGER.export_file(name, filepath)
 
