@@ -78,7 +78,8 @@ class ItemRouter:
     def report(self):
         locations = sorted(self.assignments,
                            key=lambda l: self.get_location_rank(l))
-        maxlen = max(len(l) for l in locations)
+        maxloclen = max(len(l) for l in locations)
+        maxitemlen = max(len(i) for i in self.assignments.values())
         s = ""
         for l in locations:
             item = self.assignments[l]
@@ -86,8 +87,8 @@ class ItemRouter:
             if name is None:
                 name = item
             else:
-                name = "{0} {1}".format(item, name)
-            s += ("{0:%s}: {1}\n" % maxlen).format(l, name)
+                name = ("{0:%s}  {1}" % maxitemlen).format(item, name)
+            s += ("{0:%s}: {1}\n" % maxloclen).format(l, name)
         return s.strip()
 
     @cached_property
@@ -165,7 +166,8 @@ class ItemRouter:
                        if k not in self.assignments])
 
     def rankrand(self, thing):
-        return md5(str(thing) + str(self.routeseed)).hexdigest()
+        return md5(
+            (str(thing) + str(self.routeseed)).encode('utf8')).hexdigest()
 
     def get_simplified_requirements(self, label, parent_labels=None,
                                     force=False):
@@ -444,6 +446,8 @@ class ItemRouter:
         self.location_ranks = defaultdict(set)
         self.location_ranks[0] = self.assignable_locations
         self.goal_requirements = None
+        random.seed(self.routeseed)
+        self.routeseed = random.randint(0, 9999999999)
 
     def choose_requirements(self):
         if not hasattr(self, "old_goal_requirements"):
@@ -510,12 +514,23 @@ class ItemRouter:
             self.assign_item(r)
         return True
 
-    def try_unlock_locations(self, reqs=None):
-        if reqs is None:
-            reqs = self.unassigned_items
-        candidates = [r for r in reqs
-                      if self.get_valid_locations(r)
-                      and self.get_item_unlocked_locations(r)]
+    def try_unlock_locations(self, reqs):
+        candidates = [r for r in reqs if self.get_valid_locations(r)]
+        valid_reqsets = [
+            set(reqset)-self.assigned_items
+            for reqset in self.requirements_locations
+            if self.requirements_locations[reqset] & self.unassigned_locations]
+        valid_reqsets = [reqset for reqset in valid_reqsets if reqset
+                         and reqset & set(candidates)
+                         and len(reqset) <= len(self.assignable_locations)]
+        candidates = sorted({req for reqset in valid_reqsets
+                             for req in reqset
+                             if self.get_valid_locations(req)})
+        if not candidates:
+            candidates = sorted(
+                {r for reqset in self.unassigned_items for r in reqset
+                 if self.get_valid_locations(r)
+                 and self.get_item_unlocked_locations(r)})
         if not candidates:
             return False
 
@@ -602,10 +617,6 @@ class ItemRouter:
                 break
             self.choose_requirements()
             success = self.try_unlock_locations(self.goal_requirements)
-            if not success:
-                success = self.try_assign_reqs()
-            if not success:
-                success = self.try_unlock_locations()
             if not success:
                 if self.custom_assignments:
                     print("Starting over. Attempt %s/%s" % (i+1, maxloops))
