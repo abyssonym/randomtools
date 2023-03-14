@@ -99,7 +99,7 @@ class ItemRouter:
 
     @property
     def assigned_locations(self):
-        return set(self.assignments.keys())
+        return self.assignments.keys()
 
     @property
     def assigned_items(self):
@@ -111,18 +111,21 @@ class ItemRouter:
 
     @property
     def assignable_locations(self):
-        if not hasattr(self, "_assignable_locations_previous_assigned"):
-            self._assignable_locations_previous_assigned = None
-        if (self._assignable_locations_previous_assigned
-                != self.assigned_locations):
-            setattr(self, "_assignable_locations_previous_assigned",
-                    self.assigned_locations)
-            self._assignable_locations = None
-        if self._assignable_locations is not None:
-            return self._assignable_locations
+        if not hasattr(self, "_assignable_locations_cache"):
+            self._assignable_locations_cache = {}
+        key = frozenset(self.assignments.values())
+        try:
+            return (self._assignable_locations_cache[key]
+                    - self.assigned_locations)
+        except KeyError:
+            pass
+
         assignable = set([k for k in self.unassigned_locations if
                           self.check_assignable(k)])
-        self._assignable_locations = assignable
+        self._assignable_locations_cache[key] = {
+            location for location in assignable | self.assigned_locations
+            if not location.startswith('_temp_')}
+        assert self._assignable_locations_cache[key] <= set(self.assign_conditions)
         return self.assignable_locations
 
     @property
@@ -249,13 +252,11 @@ class ItemRouter:
         return sorted(candidates, key=ranker)[0]
 
     def check_assignable(self, label):
-        if not hasattr(self, "_check_assignable_previous_items"):
-            self._check_assignable_previous_items = None
-        if self.assigned_items != self._check_assignable_previous_items:
-            self._check_assignable_previous_items = self.assigned_items
+        if not hasattr(self, '_check_assignable_cache'):
             self._check_assignable_cache = {}
-        if label in self._check_assignable_cache:
-            return self._check_assignable_cache[label]
+        key = (frozenset(self.assigned_items), label)
+        if key in self._check_assignable_cache:
+            return self._check_assignable_cache[key]
         requirements = self.get_simplified_requirements(label)
         if requirements == {None}:
             return False
@@ -271,7 +272,7 @@ class ItemRouter:
                 else:
                     result = True
 
-        self._check_assignable_cache[label] = result
+        self._check_assignable_cache[key] = result
         return self.check_assignable(label)
 
     def get_assigned_location(self, item):
@@ -369,7 +370,6 @@ class ItemRouter:
         assert location in self.get_valid_locations(item)
         if location in self.custom_assignments:
             assert item == self.custom_assignments[location]
-        self._assignable_locations = None
         new_locations = self.get_item_unlocked_locations(item)
         max_rank = max(self.location_ranks)
         self.assignments[location] = item
@@ -377,7 +377,6 @@ class ItemRouter:
             self.location_ranks[max_rank+1] = new_locations
 
     def assign_item(self, item, linearity=None):
-        self._assignable_locations = None
         assignable_locations = self.get_valid_locations(item)
         if not assignable_locations:
             self.force_custom()
@@ -434,7 +433,6 @@ class ItemRouter:
         return False
 
     def unassign_item(self, item, ignore=False):
-        self._assignable_locations = None
         location = self.get_assigned_location(item)
         if location is None and ignore:
             return
@@ -609,7 +607,7 @@ class ItemRouter:
         if not hasattr(self, "goal_requirements"):
             self.goal_requirements = None
 
-        maxloops = len(self.assign_conditions)*5
+        maxloops = len(self.assign_conditions)*100
         for i in range(maxloops):
             if self.check_custom():
                 continue
