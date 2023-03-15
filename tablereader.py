@@ -531,12 +531,42 @@ def shuffle_normal(candidates, random_degree=None, wide=False):
                                   random_degree=random_degree, wide=wide)
         #new_index = (i * (1-random_degree)) + (new_index * random_degree)
         new_indexes[c] = new_index
-    if candidates and hasattr(candidates[0], "index"):
+    if candidates and hasattr(candidates[0], "signature"):
         shuffled = sorted(candidates,
                           key=lambda c: (new_indexes[c], c.signature))
     else:
         shuffled = sorted(candidates,
                           key=lambda c: (new_indexes[c], random.random(), c))
+    return shuffled
+
+
+def shuffle_simple(candidates, random_degree=None):
+    assert 0 < random_degree < 1
+    if random_degree is None:
+        classes = list(set([c.__class__ for c in candidates]))
+        if len(classes) == 1 and hasattr(classes[0], "random_degree"):
+            random_degree = classes[0].random_degree
+        else:
+            random_degree = get_random_degree()
+    max_index = len(candidates)-1
+    indexes = list(range(len(candidates)))
+    new_indexes = {}
+    addition_factor = max_index * random_degree
+    for i in indexes:
+        new_index = i
+        normal = gen_random_normal(random_degree=random_degree)
+        factor = abs(normal - 0.5) * 2
+        random_index = random.randint(0, max_index)
+        new_index = (factor * random_index) + ((1-factor) * i)
+        if hasattr(candidates[i], 'signature'):
+            key = (new_index, candidates[i].signature, random.random())
+        else:
+            key = (new_index, None, random.random())
+        assert key not in new_indexes
+        new_indexes[key] = i
+    shuffled = []
+    for _, index in sorted(new_indexes.items()):
+        shuffled.append(candidates[index])
     return shuffled
 
 
