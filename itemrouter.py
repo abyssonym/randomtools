@@ -451,9 +451,10 @@ class ItemRouter:
         if not hasattr(self, "old_goal_requirements"):
             self.old_goal_requirements = None
 
+        unreachable_locations = self.unreachable_locations
         candidates = sorted([
             r for r in self.requirements_locations
-            if self.requirements_locations[r] & self.unreachable_locations])
+            if self.requirements_locations[r] & unreachable_locations])
         if not candidates:
             self.goal_requirements = None
             return None
