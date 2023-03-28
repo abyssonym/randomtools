@@ -1,6 +1,7 @@
 from .psx_file_extractor import FileManager, SANDBOX_PATH
 from .utils import (read_multi, write_multi, classproperty,
-                    random, md5hash, cached_property, clached_property)
+                    random, md5hash, cached_property, clached_property,
+                    ips_patch)
 from functools import total_ordering
 from os import path
 from hashlib import md5
@@ -143,21 +144,32 @@ def set_seed(seed):
     SEED = seed
 
 
-def determine_global_table(outfile, interactive=True):
+def determine_global_table(outfile, interactive=True, allow_conversions=True):
     global GLOBAL_LABEL
     if GLOBAL_LABEL is not None:
         return GLOBAL_LABEL
 
-    tablefiles, labelfiles = {}, {}
+    force_conversion = False
+    tablefiles, labelfiles, conversions = {}, {}, {}
     for line in open(path.join(tblpath, MASTER_FILENAME)):
         line = line.strip()
         if not line or line[0] == "#":
             continue
         while "  " in line:
             line = line.replace("  ", " ")
-        label, h2, tablefile = line.split()
-        tablefiles[h2] = (label, tablefile)
-        labelfiles[label] = tablefile
+        try:
+            label, h2, tablefile = line.split()
+            tablefiles[h2] = (label, tablefile)
+            labelfiles[label] = tablefile
+        except ValueError:
+            conversion, ips_filename = line.split(' ')
+            assert '->' in conversion
+            convert_from, convert_to = conversion.split('->')
+            if convert_from.startswith('!'):
+                convert_from = convert_from.lstrip('!')
+                force_conversion = True
+            conversions[convert_from] = (convert_to, ips_filename)
+
     h = md5hash(outfile)
     if h in tablefiles:
         label, filename = tablefiles[h]
@@ -175,6 +187,20 @@ def determine_global_table(outfile, interactive=True):
             filename = labelfiles[label]
     else:
         return None
+
+    if allow_conversions and label in conversions:
+        convert_to, ips_filename = conversions[label]
+        convert = True
+        if interactive and not force_conversion:
+            x = input("Automatically convert from {0} to {1}? (y/n) ")
+            if x and x[0].lower() == 'n':
+                convert = False
+        if convert:
+            ips_patch(outfile, path.join(tblpath, ips_filename))
+            label = convert_to
+            h = md5hash(outfile)
+            assert h in tablefiles and tablefiles[h][0] == label
+            filename = labelfiles[label]
 
     set_global_label(label)
     set_global_table_filename(filename)

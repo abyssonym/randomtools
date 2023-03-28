@@ -246,7 +246,7 @@ def run_interface(objects, custom_degree=False, custom_difficulty=False,
         raise e
 
     set_global_output_filename(outfile)
-    determine_global_table(outfile)
+    determine_global_table(outfile, allow_conversions=not setup_only)
     set_table_specs(objects)
 
     if setup_only:

@@ -526,3 +526,35 @@ def map_from_snes(address, lorom=False):
         return map_from_lorom(address)
     assert address & 0xC00000 == 0xC00000
     return address & 0x3FFFFF
+
+
+def ips_patch(outfile, ips_filename):
+    patchlist = []
+    with open(ips_filename, 'r+b') as f:
+        magic_str = f.read(5)
+        assert magic_str == b'PATCH'
+        while True:
+            offset = f.read(3)
+            blocksize = f.read(2)
+            if len(offset) < 3 or len(blocksize) < 2:
+                assert offset == b'EOF'
+                break
+            offset = int.from_bytes(offset, byteorder='big')
+            blocksize = int.from_bytes(blocksize, byteorder='big')
+            if blocksize == 0:
+                # RLE encoding
+                blocksize = f.read(2)
+                assert len(blocksize) == 2
+                blocksize = int.from_bytes(blocksize, byteorder='big')
+                repeat_byte = f.read(1)
+                assert len(repeat_byte) == 1
+                block = repeat_byte * blocksize
+            else:
+                block = f.read(blocksize)
+            assert len(block) == blocksize
+            patchlist.append((offset, block))
+
+    with open(outfile, 'r+b') as f:
+        for offset, block in patchlist:
+            f.seek(offset)
+            f.write(block)
