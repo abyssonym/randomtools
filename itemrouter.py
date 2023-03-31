@@ -367,9 +367,13 @@ class ItemRouter:
         return items
 
     def assign_item_location(self, item, location):
-        assert location in self.get_valid_locations(item)
         if location in self.custom_assignments:
             assert item == self.custom_assignments[location]
+            if location not in self.get_valid_locations(item):
+                print('WARNING: {0} may be assigned an invalid item.'.format(
+                    location))
+        else:
+            assert location in self.get_valid_locations(item)
         new_locations = self.get_item_unlocked_locations(item)
         max_rank = max(self.location_ranks)
         self.assignments[location] = item
