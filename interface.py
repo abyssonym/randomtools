@@ -178,7 +178,9 @@ def run_interface(objects, custom_degree=False, custom_difficulty=False,
 
     if flags:
         flags = flags.lower()
-        for code, code_options in sorted(codes.items()):
+        code_keys = sorted(codes.keys(), key=lambda c: (-len(c), c))
+        for code in code_keys:
+            code_options = codes[code]
             if isinstance(code_options, str):
                 code_options = [code_options]
             for co in code_options:
