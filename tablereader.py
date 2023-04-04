@@ -567,7 +567,7 @@ def shuffle_normal(candidates, random_degree=None, wide=False):
 
 
 def shuffle_simple(candidates, random_degree=None):
-    assert 0 < random_degree < 1
+    assert 0 <= random_degree <= 1
     if random_degree is None:
         classes = list(set([c.__class__ for c in candidates]))
         if len(classes) == 1 and hasattr(classes[0], "random_degree"):
