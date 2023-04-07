@@ -574,25 +574,33 @@ def shuffle_simple(candidates, random_degree=None):
             random_degree = classes[0].random_degree
         else:
             random_degree = get_random_degree()
+
     max_index = len(candidates)-1
     indexes = list(range(len(candidates)))
-    new_indexes = {}
-    addition_factor = max_index * random_degree
-    for i in indexes:
-        new_index = i
-        normal = gen_random_normal(random_degree=random_degree)
-        factor = abs(normal - 0.5) * 2
-        random_index = random.randint(0, max_index)
-        new_index = (factor * random_index) + ((1-factor) * i)
-        if hasattr(candidates[i], 'signature'):
-            key = (new_index, candidates[i].signature, random.random())
-        else:
-            key = (new_index, None, random.random())
-        assert key not in new_indexes
-        new_indexes[key] = i
-    shuffled = []
-    for _, index in sorted(new_indexes.items()):
-        shuffled.append(candidates[index])
+    pure_shuffled = list(indexes)
+    random.shuffle(pure_shuffled)
+    new_indexes = list(indexes)
+
+    for _ in range(len(indexes)):
+        for i, v in enumerate(new_indexes):
+            v += random.choice([1, -1])
+            new_indexes[i] = v
+
+    if random_degree == 0.5:
+        final_indexes = new_indexes
+    elif random_degree < 0.5:
+        factor = random_degree * 2
+        final_indexes = [((1-factor)*a) + (factor*b)
+                         for (a, b) in zip(indexes, new_indexes)]
+    elif random_degree > 0.5:
+        factor = (random_degree-0.5) * 2
+        final_indexes = [((1-factor)*a) + (factor*b)
+                         for (a, b) in zip(new_indexes, pure_shuffled)]
+
+    assert len(candidates) == len(indexes) == len(final_indexes)
+    shuffled = [candidates[i]
+                for (f, i) in sorted(zip(final_indexes, indexes))]
+
     return shuffled
 
 
