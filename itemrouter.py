@@ -366,6 +366,32 @@ class ItemRouter:
         print("WARNING: Forced to use custom item.")
         return items
 
+    def recalculate_location_ranks(self):
+        rank = 0
+        done_locations = set()
+        assigned_items = set()
+        location_ranks = defaultdict(set)
+        while True:
+            next_assigned_items = set(assigned_items)
+            for loc in self.all_locations:
+                if loc in done_locations:
+                    continue
+                reqs = self.get_simplified_requirements(loc)
+                if not reqs:
+                    reqs = {frozenset(),}
+                for req in reqs:
+                    if assigned_items >= req:
+                        location_ranks[rank].add(loc)
+                        done_locations.add(loc)
+                        if loc in self.assignments:
+                            next_assigned_items.add(self.assignments[loc])
+                        break
+            if next_assigned_items == assigned_items:
+                break
+            assigned_items = next_assigned_items
+            rank += 1
+        return location_ranks
+
     def assign_item_location(self, item, location):
         if location in self.custom_assignments:
             assert item == self.custom_assignments[location]
@@ -377,8 +403,7 @@ class ItemRouter:
         new_locations = self.get_item_unlocked_locations(item)
         max_rank = max(self.location_ranks)
         self.assignments[location] = item
-        if new_locations:
-            self.location_ranks[max_rank+1] = new_locations
+        self.location_ranks = self.recalculate_location_ranks()
 
     def assign_item(self, item, linearity=None):
         assignable_locations = self.get_valid_locations(item)
