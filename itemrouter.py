@@ -10,12 +10,15 @@ class ItemRouterException(Exception):
 
 
 class ItemRouter:
-    def __init__(self, requirefile, restrictfile=None, linearity=0.8):
+    def __init__(self, requirefile, restrictfile=None, linearity=0.8,
+                 prioritize_restrictions=False, silent=False):
         self.definitions = set([])
         self.restrictions = {}
         self.assign_conditions = {}
         self.assignments = {}
         self.linearity = linearity
+        self.prioritize_restrictions = prioritize_restrictions
+        self.silent = silent
 
         self.routeseed = random.randint(0, 9999999999)
 
@@ -73,6 +76,14 @@ class ItemRouter:
                         values = (','.join(newvalues)).split(',')
                     assert location not in self.restrictions
                     self.restrictions[location] = set(values)
+
+    def p(self, msg):
+        if not self.silent:
+            print(msg)
+
+    def stdout_write(self, msg):
+        if not self.silent:
+            stdout.write(msg)
 
     @property
     def report(self):
@@ -137,8 +148,7 @@ class ItemRouter:
 
     @property
     def ranked_requirements(self):
-        requirements = set([r for label in self.assign_conditions for r in
-                            self.get_simplified_requirements(label)])
+        requirements = set(self.requirements)
         unreachables = self.unreachable_locations
         counts = {}
         counts = [(len([u for u in unreachables
@@ -162,6 +172,16 @@ class ItemRouter:
                 req = tuple(sorted(req))
                 d[req].add(label)
         return d
+
+    @cached_property
+    def requirements(self):
+        requirements = {r for label in self.assign_conditions for r in
+                        self.get_simplified_requirements(label)}
+        return frozenset({r for r in requirements if r is not None})
+
+    @cached_property
+    def all_possible_requirements(self):
+        return {r for reqset in self.requirements for r in reqset}
 
     @property
     def unassigned_custom_assignments(self):
@@ -221,7 +241,7 @@ class ItemRouter:
                 requirements.add(frozenset(newsubreqs))
 
         if None in requirements and requirements == {None}:
-            stdout.write('.')
+            self.stdout_write('.')
             self._previous_simplified[label] = requirements
             return self.get_simplified_requirements(label)
 
@@ -348,22 +368,22 @@ class ItemRouter:
     def force_custom(self):
         for l, item in self.custom_assignments.items():
             if l in self.assignments and self.assignments[l] != item:
-                print("WARNING: Custom item assignment %s may be a softlock."
-                      % (l, item))
+                self.p("WARNING: Custom item assignment %s may be a softlock."
+                       % (l, item))
             self.assignments[l] = item
 
     def try_filter_no_custom_locations(self, items):
         temp = [i for i in items if i not in self.custom_assignments.keys()]
         if temp:
             return temp
-        print("WARNING: Forced to use custom item location.")
+        self.p("WARNING: Forced to use custom item location.")
         return items
 
     def try_filter_no_custom_items(self, items):
         temp = [i for i in items if i not in self.custom_assignments.values()]
         if temp:
             return temp
-        print("WARNING: Forced to use custom item.")
+        self.p("WARNING: Forced to use custom item.")
         return items
 
     def recalculate_location_ranks(self):
@@ -396,14 +416,41 @@ class ItemRouter:
         if location in self.custom_assignments:
             assert item == self.custom_assignments[location]
             if location not in self.get_valid_locations(item):
-                print('WARNING: {0} may be assigned an invalid item.'.format(
-                    location))
+                self.p('WARNING: {0} may be assigned an invalid item.'.format(
+                       location))
         else:
             assert location in self.get_valid_locations(item)
         new_locations = self.get_item_unlocked_locations(item)
         max_rank = max(self.location_ranks)
         self.assignments[location] = item
         self.location_ranks = self.recalculate_location_ranks()
+
+    def filter_locations_most_restricted(self, locations):
+        duplicates = set()
+        for loc1 in sorted(locations):
+            for loc2 in sorted(locations):
+                if loc1 == loc2:
+                    continue
+                req1 = self.get_simplified_requirements(loc1)
+                req2 = self.get_simplified_requirements(loc2)
+                if req1 != req2:
+                    continue
+                if not (req1 and req2):
+                    continue
+                res1 = self.all_possible_requirements
+                res2 = self.all_possible_requirements
+                if loc1 in self.restrictions:
+                    res1 = self.restrictions[loc1]
+                if loc2 in self.restrictions:
+                    res2 = self.restrictions[loc2]
+                if res1 == res2:
+                    continue
+                if res1 < res2:
+                    duplicates.add(loc2)
+                elif res1 > res2:
+                    duplicates.add(loc1)
+        locations = [c for c in locations if c not in duplicates]
+        return locations
 
     def assign_item(self, item, linearity=None):
         assignable_locations = self.get_valid_locations(item)
@@ -419,6 +466,8 @@ class ItemRouter:
 
         if candidates:
             candidates = self.try_filter_no_custom_locations(candidates)
+            if self.prioritize_restrictions:
+                candidates = self.filter_locations_most_restricted(candidates)
             chosen = random.choice(sorted(candidates))
             self.old_goal_requirements = None
         else:
@@ -432,6 +481,10 @@ class ItemRouter:
                                 self.get_complexity_rank(c), self.rankrand(c))
             candidates = sorted(assignable_locations, key=ranker)
             candidates = self.try_filter_no_custom_locations(candidates)
+
+            if self.prioritize_restrictions:
+                candidates = self.filter_locations_most_restricted(candidates)
+
             if self.goal_requirements is not None:
                 sorted_goals = self.get_bottleneck_goals()
                 goal = sorted_goals[0]
@@ -455,7 +508,7 @@ class ItemRouter:
         locations = set(locations) & set(self.assignable_locations)
         for l in locations:
             item = self.custom_assignments[l]
-            print("Assigning custom item: %s to %s" % (item, l))
+            self.p("Assigning custom item: %s to %s" % (item, l))
             self.assign_item_location(item, l)
         if locations:
             return True
@@ -590,13 +643,13 @@ class ItemRouter:
 
     def prep_requirements(self):
         # this section repeatedly runs the algorithm to ensure stable results
-        stdout.write("Analyzing key/lock requirements now.\n")
-        stdout.write("Loop 0: ")
+        self.stdout_write("Analyzing key/lock requirements now.\n")
+        self.stdout_write("Loop 0: ")
         for label in sorted(self.assign_conditions):
             self.get_simplified_requirements(label)
-        stdout.write("\n")
+        self.stdout_write("\n")
         for i in range(1000):
-            stdout.write("Loop %s: " % (i+1))
+            self.stdout_write("Loop %s: " % (i+1))
             break_flag = True
             if i % 2:
                 conditions = sorted(self.assign_conditions)
@@ -609,7 +662,7 @@ class ItemRouter:
                                                                     force=True)
                 if old_requirements != new_requirements:
                     break_flag = False
-            stdout.write("\n")
+            self.stdout_write("\n")
             if break_flag:
                 break
         else:
@@ -623,11 +676,11 @@ class ItemRouter:
                 if label in self.definitions:
                     self.definitions.remove(label)
 
-        print("Done analyzing.")
+        self.p("Done analyzing.")
 
     def assign_everything(self):
         self.prep_requirements()
-        print("Assigning items to locations.")
+        self.p("Assigning items to locations.")
         random.seed(self.routeseed)
         if not hasattr(self, "custom_assignments"):
             self.custom_assignments = {}
@@ -647,10 +700,10 @@ class ItemRouter:
             success = self.try_unlock_locations(self.goal_requirements)
             if not success:
                 if self.custom_assignments:
-                    print("Starting over. Attempt %s/%s" % (i+1, maxloops))
+                    self.p("Starting over. Attempt %s/%s" % (i+1, maxloops))
                 self.clear_assignments()
         else:
             raise ItemRouterException("Could not complete route.")
 
         self.force_custom()
-        #print(self.report)
+        #self.p(self.report)
