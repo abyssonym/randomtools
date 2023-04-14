@@ -558,3 +558,207 @@ def ips_patch(outfile, ips_filename):
         for offset, block in patchlist:
             f.seek(offset)
             f.write(block)
+
+
+class SnesGfxManager:
+    @staticmethod
+    def deinterleave_tile(tile, is_8color=False):
+        rows = []
+        old_bitcount = sum([bin(v).count('1') for v in tile])
+        for i in range(8):
+            if is_8color:
+                interleaved = (tile[i*2], tile[(i*2)+1],
+                               tile[i+16])
+            else:
+                interleaved = (tile[i*2], tile[(i*2)+1],
+                               tile[(i*2)+16], tile[(i*2)+17])
+            row = []
+            for j in range(7, -1, -1):
+                pixel = 0
+                mask = 1 << j
+                for k, v in enumerate(interleaved):
+                    pixel |= bool(v & mask) << k
+
+                if is_8color:
+                    assert 0 <= pixel <= 7
+                else:
+                    assert 0 <= pixel <= 0xf
+                row.append(pixel)
+
+            assert len(row) == 8
+            rows.append(row)
+
+        assert len(rows) == 8
+        #assert SnesGfxManager.interleave_tile(rows) == tile
+        new_bitcount = sum([bin(v).count('1') for vs in rows for v in vs])
+        assert old_bitcount == new_bitcount
+        return rows
+
+    @staticmethod
+    def interleave_tile(old_tile, is_8color=False):
+        if is_8color:
+            new_tile = [0]*24
+        else:
+            new_tile = [0]*32
+
+        old_bitcount = sum([bin(v).count('1')
+                            for vs in old_tile for v in vs])
+        assert len(old_tile) == 8
+        for (j, old_row) in enumerate(old_tile):
+            assert len(old_row) == 8
+            for (i, pixel) in enumerate(old_row):
+                i = 7 - i
+                a = bool(pixel & 1)
+                b = bool(pixel & 2)
+                c = bool(pixel & 4)
+                d = bool(pixel & 8)
+
+                new_tile[(j*2)] |= (a << i)
+                new_tile[(j*2)+1] |= (b << i)
+                if is_8color:
+                    new_tile[j+16] |= (c << i)
+                else:
+                    new_tile[(j*2)+16] |= (c << i)
+                    new_tile[(j*2)+17] |= (d << i)
+
+        new_bitcount = sum([bin(v).count('1') for v in new_tile])
+
+        assert old_bitcount == new_bitcount
+        assert SnesGfxManager.deinterleave_tile(new_tile,
+                                                is_8color) == old_tile
+        return bytes(new_tile)
+
+    @staticmethod
+    def data_to_tiles(old_data):
+        data = old_data
+        tiles = []
+        while data:
+            tile, data = data[:0x20], data[0x20:]
+            tile = SnesGfxManager.deinterleave_tile(tile)
+            tiles.append(tile)
+        return tiles
+
+    @staticmethod
+    def tiles_to_data(tiles):
+        data = b''
+        for t in tiles:
+            data += SnesGfxManager.interleave_tile(t)
+        return data
+
+    @staticmethod
+    def tiles_to_pixels(tiles, width=8):
+        height = len(tiles) // width
+        rows = []
+        for y in range(height):
+            row = []
+            for x in range(width):
+                row.append(tiles.pop(0))
+            rows.append(row)
+
+        all_pixels = []
+        for row in rows:
+            for i in range(8):
+                for tile in row:
+                    tile_row = tile[i]
+                    all_pixels.extend(tile_row)
+
+        return all_pixels
+
+    @staticmethod
+    def pixels_to_tiles(pixels, width=8):
+        assert len(pixels) % (8*8) == 0
+        pixel_width = width * 8
+        pixel_height = len(pixels) // pixel_width
+        tile_width = width
+        tile_height = pixel_height // 8
+        num_tiles = len(pixels) // (8*8)
+
+        tiles = []
+        for tile_index in range(num_tiles):
+            tile_row = tile_index // tile_width
+            tile_column = tile_index % tile_width
+            pixel_x = tile_column * 8
+            pixel_y = tile_row * 8
+            tile = []
+            base_pixel_index = (pixel_y * pixel_width) + pixel_x
+            for pixel_row in range(8):
+                pixel_index = base_pixel_index + (pixel_row * pixel_width)
+                row = pixels[pixel_index:pixel_index+8]
+                assert len(row) == 8
+                tile.append(row)
+            tiles.append(tile)
+
+        assert all(len(tile) == 8 for tile in tiles)
+        return tiles
+
+    @staticmethod
+    def snes_palette_to_rgb(colors):
+        multiplier = 0xff / 0x1f
+        rgbs = []
+        for c in colors:
+            r = c & 0x1f
+            g = (c >> 5) & 0x1f
+            b = (c >> 10) & 0x1f
+            a = (c >> 15)
+            assert not a
+            if a:
+                r, g, b = 0, 0, 0
+            r = int(round(multiplier * r))
+            g = int(round(multiplier * g))
+            b = int(round(multiplier * b))
+            rgbs.append((r, g, b))
+        return rgbs
+
+    @staticmethod
+    def rgb_palette_to_snes(rgbs):
+        if isinstance(rgbs[0], int):
+            assert len(rgbs) % 3 == 0
+            rgbs = zip(rgbs[::3], rgbs[1::3], rgbs[2::3])
+        palette = []
+        factor = 0x1f / 0xff
+        for r, g, b in rgbs:
+            r = int(round(r * factor))
+            g = int(round(g * factor))
+            b = int(round(b * factor))
+            assert 0 <= r <= 0x1f
+            assert 0 <= g <= 0x1f
+            assert 0 <= b <= 0x1f
+            c = r | (g << 5) | (b << 10)
+            assert 0 <= c <= 0xffff
+            palette.append(c)
+        return palette
+
+    @staticmethod
+    def pixels_to_image(pixels, width, height, palette):
+        from PIL import Image
+        data = bytes(pixels)
+        im = Image.frombytes(mode='P', size=(width, height), data=data)
+        if isinstance(palette[0], int):
+            palette = SnesGfxManager.snes_palette_to_rgb(palette)
+        palette = [c for color in palette for c in color]
+        im.putpalette(palette)
+        return im
+
+    @staticmethod
+    def image_to_data(filename):
+        from PIL import Image
+        from math import ceil
+        image = Image.open(filename)
+        tile_width = ceil(image.width / 8)
+        tile_height = ceil(image.height / 8)
+        tiles = []
+        for ty in range(tile_height):
+            for tx in range(tile_width):
+                tile = []
+                for y in range(8):
+                    row = []
+                    for x in range(8):
+                        p = image.getpixel(((tx*8)+x, (ty*8)+y))
+                        row.append(p)
+                    tile.append(row)
+                tiles.append(tile)
+
+        data = b''
+        for t in tiles:
+            data += SnesGfxManager.interleave_tile(t)
+        return data
