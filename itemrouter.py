@@ -474,7 +474,7 @@ class ItemRouter:
             if linearity is None:
                 linearity = self.linearity
                 new_locations = self.get_item_unlocked_locations(item)
-                if not new_locations:
+                if linearity >= 0 and not new_locations:
                     linearity = linearity ** 2
 
             ranker = lambda c: (self.get_location_rank(c),
@@ -494,8 +494,11 @@ class ItemRouter:
                     if temp:
                         candidates = temp
             max_index = len(candidates)-1
-            weighted_value = (random.random() ** (1-linearity))
-            index = int(round(max_index * weighted_value))
+            weighted_value = (random.random() ** (1-abs(linearity)))
+            if linearity >= 0:
+                index = int(round(max_index * weighted_value))
+            else:
+                index = max_index - int(round(max_index) * weighted_value)
             chosen = candidates[index]
 
         rank = [i for i in self.location_ranks
