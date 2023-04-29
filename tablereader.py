@@ -1,10 +1,11 @@
 from .psx_file_extractor import FileManager, SANDBOX_PATH
 from .utils import (read_multi, write_multi, classproperty,
                     random, md5hash, cached_property, clached_property,
-                    ips_patch)
+                    ips_patch, map_to_snes)
 from functools import total_ordering
 from os import path
 from hashlib import md5
+import re
 from sys import stdout
 import string
 from copy import copy
@@ -41,6 +42,7 @@ OPEN_FILES = {}
 ALL_FILES = set()
 REMOVED_FILES = set()
 MAX_OPEN_FILE_COUNT = 100
+ADDRESSING_MODE = None
 
 
 def get_open_file(filepath, sandbox=False):
@@ -144,6 +146,16 @@ def set_seed(seed):
     SEED = seed
 
 
+def set_addressing_mode(mode):
+    global ADDRESSING_MODE
+    ADDRESSING_MODE = mode
+
+
+def get_addressing_mode():
+    global ADDRESSING_MODE
+    return ADDRESSING_MODE
+
+
 def determine_global_table(outfile, interactive=True, allow_conversions=True):
     global GLOBAL_LABEL
     if GLOBAL_LABEL is not None:
@@ -211,6 +223,7 @@ def patch_filename_to_bytecode(patchfilename):
     patch = {}
     validation = {}
     definitions = {}
+    code_addresses = {}
     labels = {}
     next_address = None
     filename = None
@@ -232,6 +245,16 @@ def patch_filename_to_bytecode(patchfilename):
             definitions[name] = value
             continue
 
+        if line.startswith(".addr"):
+            try:
+                _, name, value, length = line.split(' ', 3)
+            except ValueError:
+                _, name, value = line.split(' ', 2)
+                length = 3
+            name = name.lstrip('$')
+            code_addresses[name] = (int(value, 0x10), int(length))
+            continue
+
         if line.startswith(".label"):
             try:
                 _, name, address = line.split(' ')
@@ -245,6 +268,30 @@ def patch_filename_to_bytecode(patchfilename):
         for name in sorted(definitions, key=lambda d: (-len(d), d)):
             if name in line:
                 line = line.replace(name, definitions[name])
+
+        for name in sorted(code_addresses, key=lambda a: (-len(a), a)):
+            to_replace = '${0}'.format(name)
+            if to_replace in line:
+                if ':' not in line:
+                    line = line + ':'
+                address, length = code_addresses[name]
+                replacement = '{0:x}'.format(address)
+                colon_index = line.index(':')
+                replace_index = line.index(to_replace)
+                if colon_index < replace_index:
+                    if ADDRESSING_MODE is not None:
+                        lorom = ADDRESSING_MODE == 'lorom'
+                        address = map_to_snes(address, lorom=lorom)
+                    bytestr = address.to_bytes(
+                        length=length, byteorder='little')
+                    replacement = ' '.join(['{0:0>2x}'.format(c)
+                                            for c in bytestr])
+                    for i in range(1, length+1):
+                        length_replace = '%s,%s' % (to_replace, i)
+                        length_replacement = ' '.join([
+                            '{0:0>2x}'.format(c) for c in bytestr[:i]])
+                        line = line.replace(length_replace, length_replacement)
+                line = line.replace(to_replace, replacement)
 
         if line.upper() == 'VALIDATION':
             read_into = validation

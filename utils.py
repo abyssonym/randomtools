@@ -517,15 +517,30 @@ def map_from_lorom(lorom_address):
 def map_to_snes(address, lorom=False):
     if lorom:
         return map_to_lorom(address)
-    assert not address & 0xFFC00000
-    return address | 0xC00000
+    assert 0 <= address <= 0x7FFFFF
+    if address < 0x400000:
+        return address | 0xC00000
+    elif address < 0x7E0000:
+        return address
+    else:
+        # NOTE: Normally 7E and 7F can be accessed with banks 3E and 3F
+        # But we cannot use 3E:0000-3E:7FFF or 3F:0000-3F:7FFF
+        # Only 3E:8000-3E:FFFF and 3F:8000-3F:FFFF can be used
+        # In all, ExHiROM can address 63.5 MBits of ROM
+        # But that last 0.5 MBits seems like a pain so let's just ignore it
+        raise NotImplementedError
 
 
 def map_from_snes(address, lorom=False):
     if lorom:
         return map_from_lorom(address)
-    assert address & 0xC00000 == 0xC00000
-    return address & 0x3FFFFF
+    if address & 0xC00000 == 0xC00000:
+        return address & 0x3FFFFF
+    if 0x400000 <= address < 0x7E0000:
+        return address
+    if address & 0x8000 and (address >> 16) in (0x3E, 0x3F):
+        raise NotImplementedError
+    raise ValueError('%X cannot be mapped to ROM.' % address)
 
 
 def ips_patch(outfile, ips_filename):

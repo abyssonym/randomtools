@@ -9,7 +9,7 @@ from .tablereader import (
     determine_global_table, sort_good_order, set_table_specs,
     set_global_output_filename, select_patches, write_patches, verify_patches,
     get_random_degree, set_random_degree, get_difficulty, set_difficulty,
-    set_seed, get_seed, close_file,
+    set_seed, get_seed, close_file, get_addressing_mode, set_addressing_mode,
     reimport_psx_files)
 from .utils import (
     utilrandom as random, rewrite_snes_title, rewrite_snes_checksum,
@@ -59,7 +59,11 @@ def activate_code(code):
     activated_codes.add(code)
 
 
-def rewrite_snes_meta(title, version, lorom=False):
+def rewrite_snes_meta(title, version, lorom=None):
+    addressing_mode = get_addressing_mode()
+    if lorom is None:
+        lorom = addressing_mode == 'lorom'
+
     close_file(outfile)
 
     for o in get_all_objects():
@@ -72,6 +76,7 @@ def rewrite_snes_meta(title, version, lorom=False):
             random_degree = "!!"
         else:
             random_degree = "{0:0>2}".format(random_degree)
+
     rewrite_snes_title("%s %s %s" % (title, random_degree, get_seed()),
                        outfile, version, lorom=lorom)
     rewrite_snes_checksum(outfile, lorom=lorom)
@@ -107,8 +112,8 @@ def write_cue_file():
 
 
 def run_interface(objects, custom_degree=False, custom_difficulty=False,
-                  codes=None, snes=False, args=None, setup_only=False,
-                  override_outfile=None):
+                  codes=None, snes=False, lorom=False, args=None,
+                  setup_only=False, override_outfile=None):
     global sourcefile, outfile, flags, user_input_flags
     global activated_codes, all_objects
 
@@ -215,6 +220,10 @@ def run_interface(objects, custom_degree=False, custom_difficulty=False,
         print('Making copy of rom file...')
         if snes:
             snescopy(sourcefile, outfile)
+            if lorom:
+                set_addressing_mode('lorom')
+            else:
+                set_addressing_mode('hirom')
         else:
             if (DELTA_FILE is not None
                     and DELTA_FILE in listdir() and outfile in listdir()):
