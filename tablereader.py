@@ -2,7 +2,7 @@ from .psx_file_extractor import FileManager, SANDBOX_PATH
 from .utils import (read_multi, write_multi, classproperty,
                     random, md5hash, cached_property, clached_property,
                     ips_patch, map_to_snes)
-from _io import BufferedRandom
+from _io import BytesIO, BufferedRandom
 from functools import total_ordering
 from os import path
 from hashlib import md5
@@ -47,7 +47,7 @@ ADDRESSING_MODE = None
 
 
 def get_open_file(filepath, sandbox=False):
-    if isinstance(filepath, BufferedRandom):
+    if isinstance(filepath, BytesIO) or isinstance(filepath, BufferedRandom):
         return filepath
     filepath = filepath.replace('/', path.sep)
     filepath = filepath.replace('\\', path.sep)
