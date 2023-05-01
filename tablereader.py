@@ -268,10 +268,6 @@ def patch_filename_to_bytecode(patchfilename):
                 labels[name] = None
             continue
 
-        for name in sorted(definitions, key=lambda d: (-len(d), d)):
-            if name in line:
-                line = line.replace(name, definitions[name])
-
         for name in sorted(code_addresses, key=lambda a: (-len(a), a)):
             to_replace = '${0}'.format(name)
             if to_replace in line:
@@ -295,6 +291,10 @@ def patch_filename_to_bytecode(patchfilename):
                             '{0:0>2x}'.format(c) for c in bytestr[:i]])
                         line = line.replace(length_replace, length_replacement)
                 line = line.replace(to_replace, replacement)
+
+        for name in sorted(definitions, key=lambda d: (-len(d), d)):
+            if name in line and not line.strip().startswith('.'):
+                line = line.replace(name, definitions[name])
 
         if line.upper() == 'VALIDATION':
             read_into = validation
