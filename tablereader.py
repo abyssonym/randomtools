@@ -48,6 +48,8 @@ ADDRESSING_MODE = None
 
 def get_open_file(filepath, sandbox=False):
     if isinstance(filepath, BytesIO) or isinstance(filepath, BufferedRandom):
+        if filepath.closed:
+            filepath = open(filepath.name, 'r+b')
         return filepath
     filepath = filepath.replace('/', path.sep)
     filepath = filepath.replace('\\', path.sep)
@@ -473,13 +475,9 @@ def write_patches(outfile):
         write_patch(outfile, patchfilename)
 
 
-def verify_patches(outfile):
-    if not PATCH_FILENAMES:
-        return
-
-    print("Verifying patches...")
+def verify_patchlist(outfile, patchlist):
     f = get_open_file(outfile)
-    for patchfilename in PATCH_FILENAMES:
+    for patchfilename in patchlist:
         if patchfilename in NOVERIFY_PATCHES:
             continue
         patchpath = path.join(tblpath, patchfilename)
@@ -497,6 +495,14 @@ def verify_patches(outfile):
             if code != written:
                 raise Exception(
                     "Patch %x conflicts with modified data." % address)
+
+
+def verify_patches(outfile):
+    if not PATCH_FILENAMES:
+        return
+
+    print("Verifying patches...")
+    verify_patchlist(outfile, PATCH_FILENAMES)
 
 
 def get_activated_patches():
