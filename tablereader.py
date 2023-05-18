@@ -268,6 +268,9 @@ def patch_filename_to_bytecode(patchfilename):
                 _, name = line.split(' ')
                 address = None
                 labels[name] = None
+                for i in range(1, 4):
+                    name_with_length = '%s,%s' % (name, i)
+                    labels[name_with_length] = None
             continue
 
         for name in sorted(code_addresses, key=lambda a: (-len(a), a)):
@@ -327,22 +330,44 @@ def patch_filename_to_bytecode(patchfilename):
             if labels[name] is None:
                 labels[name] = (address, filename)
 
-        next_address = address + len(code.split())
+        next_address = address
+        for word in code.split():
+            if ',' in word:
+                _, length = word.split(',')
+                length = int(length)
+                next_address += length
+            else:
+                next_address += 1
 
     for read_into in (patch, validation):
         for (address, filename) in sorted(read_into):
             code = read_into[address, filename]
             for name in sorted(labels, key=lambda l: (-len(l), l)):
                 if name in code:
+                    if ',' in name:
+                        name, length = name.split(',')
+                        length = int(length)
+                    else:
+                        length = 1
                     target_address, target_filename = labels[name]
                     assert target_filename == filename
-                    jump = target_address - (address + 2)
+                    if length == 1:
+                        jump = target_address - (address + (length*2))
+                    else:
+                        assert length == 2
+                        jump = target_address - (address + 4)
                     if jump < 0:
-                        jump = 0x100 + jump
-                    if not 0 <= jump <= 0xFF:
+                        jump = (0x100**length) + jump
+                        assert jump >= (0x100**length) >> 1
+                    if not 0 <= jump < (0x100**length):
                         raise Exception("Label out of range %x - %s" %
                                         (address, code))
-                    code = code.replace(name, "%x" % jump)
+                    replacement = jump.to_bytes(length=length,
+                                                byteorder='little')
+                    replacement = ' '.join(['{0:0>2x}'.format(c)
+                                            for c in replacement])
+                    code = code.replace('%s,%s' % (name, length), replacement)
+                    code = code.replace(name, replacement)
 
             code = bytearray(map(lambda s: int(s, 0x10), code.split()))
             read_into[address, filename] = code
