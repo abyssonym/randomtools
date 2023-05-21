@@ -356,6 +356,8 @@ def patch_filename_to_bytecode(patchfilename):
                     else:
                         assert length == 2
                         jump = target_address - (address + 4)
+
+                    assert abs(jump) < ((0x100**length) >> 1)
                     if jump < 0:
                         jump = (0x100**length) + jump
                         assert jump >= (0x100**length) >> 1
