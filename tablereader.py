@@ -352,10 +352,19 @@ def patch_filename_to_bytecode(patchfilename):
                     target_address, target_filename = labels[name]
                     assert target_filename == filename
                     if length == 1:
-                        jump = target_address - (address + (length*2))
+                        jump = target_address - (address + 2)
                     else:
                         assert length == 2
-                        jump = target_address - (address + 4)
+                        opcode = int(code.split()[0], 0x10)
+                        assert opcode in (0x62, 0x82)
+                        if opcode in (0x62,):
+                            jump = target_address - (address + 4)
+                        elif opcode in (0x82,):
+                            jump = target_address - (address + 3)
+                        else:
+                            raise Exception(
+                                'Label not compatible with opcode '
+                                '{0:0>2X}.'.format(opcode))
 
                     assert abs(jump) < ((0x100**length) >> 1)
                     if jump < 0:
