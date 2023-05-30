@@ -1,7 +1,7 @@
 from .psx_file_extractor import FileManager, SANDBOX_PATH
 from .utils import (read_multi, write_multi, classproperty,
                     random, md5hash, cached_property, clached_property,
-                    ips_patch, map_to_snes)
+                    ips_patch, map_to_snes, read_lines_nocomment)
 from _io import BytesIO, BufferedRandom
 from functools import total_ordering
 from os import path
@@ -44,6 +44,7 @@ ALL_FILES = set()
 REMOVED_FILES = set()
 MAX_OPEN_FILE_COUNT = 100
 ADDRESSING_MODE = None
+MAPPINGS = {}
 
 
 def get_open_file(filepath, sandbox=False):
@@ -224,7 +225,31 @@ def determine_global_table(outfile, interactive=True, allow_conversions=True):
     return GLOBAL_LABEL
 
 
-def patch_filename_to_bytecode(patchfilename):
+def patch_filename_to_bytecode(patchfilename, mapping=None):
+    if patchfilename in MAPPINGS and mapping is None:
+        mapping = MAPPINGS[patchfilename]
+    if mapping is not None:
+        MAPPINGS[patchfilename] = mapping
+        temp = {}
+        for line in read_lines_nocomment(mapping):
+            start, finish, offset = line.strip().split()
+            start = int(start, 0x10)
+            finish = int(finish, 0x10)
+            offset = int(offset, 0x10)
+            key = (start, finish)
+            assert key not in temp
+            temp[key] = offset
+        mapping = temp
+
+    def map_address(address):
+        if mapping is None:
+            return address
+        for start, finish in sorted(mapping.keys()):
+            if start <= address <= finish:
+                return address + mapping[start, finish]
+        raise Exception('No valid mapping for {0:0>6x} in {1}.'.format(
+            address, patchfilename))
+
     patch = {}
     validation = {}
     definitions = {}
@@ -257,7 +282,8 @@ def patch_filename_to_bytecode(patchfilename):
                 _, name, value = line.split(' ', 2)
                 length = 3
             name = name.lstrip('$')
-            code_addresses[name] = (int(value, 0x10), int(length))
+            address = int(value, 0x10)
+            code_addresses[name] = (address, int(length))
             continue
 
         if line.startswith(".label"):
@@ -283,6 +309,8 @@ def patch_filename_to_bytecode(patchfilename):
                 colon_index = line.index(':')
                 replace_index = line.index(to_replace)
                 if colon_index < replace_index:
+                    address = map_address(address)
+                    replacement = '{0:x}'.format(address)
                     if ADDRESSING_MODE is not None:
                         lorom = ADDRESSING_MODE == 'lorom'
                         address = map_to_snes(address, lorom=lorom)
@@ -317,7 +345,7 @@ def patch_filename_to_bytecode(patchfilename):
                 address, filename = address.split('@')
                 filename = filename.replace('/', path.sep)
                 filename = filename.replace('\\', path.sep)
-            address = int(address, 0x10)
+            address = map_address(int(address, 0x10))
         code = code.strip()
         while '  ' in code:
             code = code.replace('  ', ' ')
@@ -410,7 +438,8 @@ def select_patches():
         PATCH_FILENAMES.remove(pfn)
 
 
-def write_patch(outfile, patchfilename, noverify=None, force=False):
+def write_patch(outfile, patchfilename, noverify=None, force=False,
+                mapping=None):
     if patchfilename in ALREADY_PATCHED and not force:
         return
     if noverify and patchfilename not in NOVERIFY_PATCHES:
@@ -426,7 +455,7 @@ def write_patch(outfile, patchfilename, noverify=None, force=False):
         CMP_PATCH_FILENAMES.append(patchfilename)
         return write_cmp_patch(f, patchpath)
 
-    patch, validation = patch_filename_to_bytecode(patchpath)
+    patch, validation = patch_filename_to_bytecode(patchpath, mapping=mapping)
     for patchdict in (validation, patch):
         for (address, filename), code in sorted(patchdict.items()):
             if filename is None:
