@@ -456,6 +456,24 @@ def write_patch(outfile, patchfilename, noverify=None, force=False,
         return write_cmp_patch(f, patchpath)
 
     patch, validation = patch_filename_to_bytecode(patchpath, mapping=mapping)
+    for (address, filename), code in sorted(patch.items()):
+        if filename is None:
+            f = get_open_file(outfile)
+        else:
+            if PSX_FILE_MANAGER is None:
+                create_psx_file_manager(outfile)
+            f = get_open_file(filename, sandbox=True)
+        f.seek(address)
+        validate = f.read(len(code))
+        if validate != code[:len(validate)]:
+            break
+    else:
+        # this patch has already been applied
+        if patchfilename not in PATCH_FILENAMES:
+            PATCH_FILENAMES.append(patchfilename)
+        ALREADY_PATCHED.add(patchfilename)
+        return
+
     for patchdict in (validation, patch):
         for (address, filename), code in sorted(patchdict.items()):
             if filename is None:
