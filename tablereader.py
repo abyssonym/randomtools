@@ -45,6 +45,7 @@ REMOVED_FILES = set()
 MAX_OPEN_FILE_COUNT = 100
 ADDRESSING_MODE = None
 MAPPINGS = {}
+PATCH_PARAMETERS = {}
 
 
 def get_open_file(filepath, sandbox=False):
@@ -225,7 +226,21 @@ def determine_global_table(outfile, interactive=True, allow_conversions=True):
     return GLOBAL_LABEL
 
 
-def patch_filename_to_bytecode(patchfilename, mapping=None):
+def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
+    if parameters is not None:
+        for parameter_name, value in parameters.items():
+            if isinstance(value, int):
+                s = ''
+                while True:
+                    s = ' '.join([s, '{0:0>2x}'.format(value & 0xff)]).strip()
+                    value >>= 8
+                    if not value:
+                        break
+                value = s
+            if parameter_name in PATCH_PARAMETERS:
+                assert PATCH_PARAMETERS[parameter_name] == value
+            PATCH_PARAMETERS[parameter_name] = value
+
     if patchfilename in MAPPINGS and mapping is None:
         mapping = MAPPINGS[patchfilename]
     if mapping is not None:
@@ -269,6 +284,12 @@ def patch_filename_to_bytecode(patchfilename, mapping=None):
 
         while "  " in line:
             line = line.replace("  ", " ")
+
+        if '{{' in line:
+            for name in sorted(PATCH_PARAMETERS, key=lambda n: (-len(n), n)):
+                to_replace = '{{%s}}' % name
+                if to_replace in line:
+                    line = line.replace(to_replace, PATCH_PARAMETERS[name])
 
         if line.startswith(".def"):
             _, name, value = line.split(' ', 2)
@@ -439,7 +460,7 @@ def select_patches():
 
 
 def write_patch(outfile, patchfilename, noverify=None, force=False,
-                mapping=None):
+                mapping=None, parameters=None):
     if patchfilename in ALREADY_PATCHED and not force:
         return
     if noverify and patchfilename not in NOVERIFY_PATCHES:
@@ -455,7 +476,8 @@ def write_patch(outfile, patchfilename, noverify=None, force=False,
         CMP_PATCH_FILENAMES.append(patchfilename)
         return write_cmp_patch(f, patchpath)
 
-    patch, validation = patch_filename_to_bytecode(patchpath, mapping=mapping)
+    patch, validation = patch_filename_to_bytecode(patchpath, mapping=mapping,
+                                                   parameters=parameters)
     for (address, filename), code in sorted(patch.items()):
         if filename is None:
             f = get_open_file(outfile)
