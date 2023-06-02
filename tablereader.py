@@ -273,6 +273,7 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
     next_address = None
     filename = None
     read_into = patch
+    defparmatcher = re.compile('({{([^:]*):([^}]*)}})')
     f = open(patchfilename)
     for line in f:
         line = line.strip()
@@ -285,8 +286,16 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
         while "  " in line:
             line = line.replace("  ", " ")
 
+        defparmatches = defparmatcher.findall(line)
+        for match in defparmatches:
+            to_replace, name, value = match
+            if name not in PATCH_PARAMETERS:
+                line = line.replace(to_replace, value)
+
         if '{{' in line:
             for name in sorted(PATCH_PARAMETERS, key=lambda n: (-len(n), n)):
+                if name not in line:
+                    continue
                 to_replace = '{{%s}}' % name
                 if to_replace in line:
                     line = line.replace(to_replace, PATCH_PARAMETERS[name])
