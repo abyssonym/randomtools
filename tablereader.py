@@ -402,6 +402,13 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
             code = read_into[address, filename]
             for name in sorted(labels, key=lambda l: (-len(l), l)):
                 if name in code:
+                    direct = '@%s' % name
+                    if direct in code:
+                        code = code.replace(direct, name)
+                        direct = True
+                    else:
+                        direct = False
+
                     if ',' in name:
                         name, length = name.split(',')
                         length = int(length)
@@ -409,7 +416,9 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
                         length = 1
                     target_address, target_filename = labels[name]
                     assert target_filename == filename
-                    if length == 1:
+                    if direct:
+                        jump = target_address & ((0x100**length)-1)
+                    elif length == 1:
                         jump = target_address - (address + 2)
                     else:
                         assert length == 2
@@ -424,13 +433,14 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
                                 'Label not compatible with opcode '
                                 '{0:0>2X}.'.format(opcode))
 
-                    assert abs(jump) < ((0x100**length) >> 1)
-                    if jump < 0:
-                        jump = (0x100**length) + jump
-                        assert jump >= (0x100**length) >> 1
-                    if not 0 <= jump < (0x100**length):
-                        raise Exception("Label out of range %x - %s" %
-                                        (address, code))
+                    if not direct:
+                        assert abs(jump) < ((0x100**length) >> 1)
+                        if jump < 0:
+                            jump = (0x100**length) + jump
+                            assert jump >= (0x100**length) >> 1
+                        if not 0 <= jump < (0x100**length):
+                            raise Exception("Label out of range %x - %s" %
+                                            (address, code))
                     replacement = jump.to_bytes(length=length,
                                                 byteorder='little')
                     replacement = ' '.join(['{0:0>2x}'.format(c)
