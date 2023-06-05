@@ -291,6 +291,8 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
             to_replace, name, value = match
             if name not in PATCH_PARAMETERS:
                 line = line.replace(to_replace, value)
+            else:
+                line = line.replace(to_replace, '{{%s}}' % name)
 
         if '{{' in line:
             for name in sorted(PATCH_PARAMETERS, key=lambda n: (-len(n), n)):
