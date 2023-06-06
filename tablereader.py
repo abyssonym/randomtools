@@ -227,16 +227,25 @@ def determine_global_table(outfile, interactive=True, allow_conversions=True):
 
 
 def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
+    def clean_parameter(value):
+        if isinstance(value, str):
+            try:
+                value = int(value, 0x10)
+            except ValueError:
+                pass
+        if isinstance(value, int):
+            s = ''
+            while True:
+                s = ' '.join([s, '{0:0>2x}'.format(value & 0xff)]).strip()
+                value >>= 8
+                if not value:
+                    break
+            value = s
+        return value
+
     if parameters is not None:
         for parameter_name, value in parameters.items():
-            if isinstance(value, int):
-                s = ''
-                while True:
-                    s = ' '.join([s, '{0:0>2x}'.format(value & 0xff)]).strip()
-                    value >>= 8
-                    if not value:
-                        break
-                value = s
+            value = clean_parameter(value)
             if parameter_name in PATCH_PARAMETERS:
                 assert PATCH_PARAMETERS[parameter_name] == value
             PATCH_PARAMETERS[parameter_name] = value
@@ -289,6 +298,7 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
         defparmatches = defparmatcher.findall(line)
         for match in defparmatches:
             to_replace, name, value = match
+            value = clean_parameter(value)
             if name not in PATCH_PARAMETERS:
                 line = line.replace(to_replace, value)
             else:
