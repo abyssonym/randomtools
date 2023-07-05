@@ -453,6 +453,11 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
                         length = 1
                     target_address, target_filename = labels[name]
                     assert target_filename == filename
+                    if direct and ADDRESSING_MODE is not None:
+                        assert target_address < 0x800000
+                        lorom = ADDRESSING_MODE == 'lorom'
+                        target_address = map_to_snes(target_address,
+                                                     lorom=lorom)
                     if direct:
                         jump = target_address & ((0x100**length)-1)
                     elif length == 1:
