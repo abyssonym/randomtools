@@ -2200,8 +2200,10 @@ def set_table_specs(objects, filename=None):
         filename = GLOBAL_TABLE
     tablesfile = path.join(tblpath, filename)
     for line in open(tablesfile):
+        if '#' in line:
+            line = line.split('#')[0]
         line = line.strip()
-        if not line or line[0] == "#":
+        if not line:
             continue
 
         if line[0] == '$':
