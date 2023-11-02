@@ -1,23 +1,26 @@
-from .utils import cached_property, read_lines_nocomment, utilrandom as random
+from .utils import cached_property, read_lines_nocomment, summarize_state, \
+                    utilrandom as random
 from collections import defaultdict
 from copy import deepcopy
 from functools import total_ordering
 from hashlib import md5
 from itertools import product
+from os import listdir, path
 from sys import stdout
-from time import time
+from time import time, sleep
+import yaml
 
 
 DEBUG = False
-LOGS = []
-MAX_WAIT = 20
-MAX_WAIT = 5
-MAX_WAIT = 600
+STRICT_GUARANTEE_CHECKS = False
+MODULE_FILEPATH, _ = path.split(__file__)
+DEFAULT_CONFIG_FILENAME = path.join(MODULE_FILEPATH, 'default.doorrouter.yaml')
 
 
 def log(line):
-    LOGS.append(line)
-    print(line)
+    if DEBUG:
+        line = line.strip()
+        print(line)
 
 
 class DoorRouterException(Exception):
@@ -25,50 +28,49 @@ class DoorRouterException(Exception):
 
 
 class RollbackMixin:
-    def commit(self):
+    def commit(self, version=None):
         if not hasattr(self, '_rollback'):
             self._rollback = {}
         for attr in self.ROLLBACK_ATTRIBUTES:
             if not hasattr(self, attr):
-                if attr in self._rollback:
-                    del(self._rollback[attr])
+                if (version, attr) in self._rollback:
+                    del(self._rollback[version, attr])
                 continue
             value = getattr(self, attr)
-            value = type(value)(value)
-            self._rollback[attr] = value
+            if value is not None:
+                value = type(value)(value)
+            self._rollback[version, attr] = value
 
-    def rollback(self):
+    def rollback(self, version=None):
         if not hasattr(self, '_rollback'):
             self._rollback = {}
         for attr in self.ROLLBACK_ATTRIBUTES:
-            if attr not in self._rollback:
+            if (version, attr) not in self._rollback:
                 if hasattr(self, attr):
                     delattr(self, attr)
                 continue
-            value = self._rollback[attr]
-            value = type(value)(value)
+            value = self._rollback[version, attr]
+            if value is not None:
+                value = type(value)(value)
             setattr(self, attr, value)
 
 
 class Graph(RollbackMixin):
     ROLLBACK_ATTRIBUTES = {
-        '_rooted', '_reachable_from_root', '_root_reachable_from',
+        'all_edges', 'conditionless_edges',
+        '_reachable_from_root', '_root_reachable_from',
+        '_avoid_reachable_cache', '_avoid_reachable_invalidated',
         }
 
     @total_ordering
     class Node(RollbackMixin):
         ROLLBACK_ATTRIBUTES = {
-            'edges', 'reverse_edges', '_subgroup',
-            '_adjacent_nodes',
-            '_rooted', '_reachable_from_root', '_root_reachable_from',
-            '_interesting_nodes', '_reachable_by_interesting',
+            'edges', 'reverse_edges', 'rank', 'guaranteed', '_rooted',
             }
 
         @total_ordering
         class Edge(RollbackMixin):
-            ROLLBACK_ATTRIBUTES = {
-                #'enabled',
-                }
+            ROLLBACK_ATTRIBUTES = {}
             GLOBAL_SORT_INDEX = 0
 
             def __init__(self, source, destination, condition, procedural):
@@ -77,36 +79,66 @@ class Graph(RollbackMixin):
                 assert isinstance(condition, frozenset)
                 self.index = Graph.Node.Edge.GLOBAL_SORT_INDEX
                 Graph.Node.Edge.GLOBAL_SORT_INDEX += 1
-                self.true_condition = set()
-                self.false_condition = set()
+
                 self.source = source
                 self.destination = destination
-                self.procedural = procedural
-                self.enabled = True
-                self.source.edges.add(self)
-                self.destination.reverse_edges.add(self)
+                self.generated = procedural
 
+                self.true_condition = set()
+                self.false_condition = set()
                 if condition:
                     assert all(isinstance(l, str) for l in condition)
                     for l in condition:
                         if l.startswith('!'):
-                            node = self.source.parent.get_by_label(l[1:])
-                            self.false_condition.add(node)
+                            requirements = \
+                                self.source.parent.expand_requirements(l[1:])
+                            assert len(requirements) == 1
+                            for req in requirements:
+                                for node in req:
+                                    node = \
+                                        self.source.parent.get_by_label(node)
+                                    assert isinstance(node, Graph.Node)
+                                    self.false_condition.add(node)
                         else:
                             node = self.source.parent.get_by_label(l)
                             self.true_condition.add(node)
+                        assert node is not None
+                assert self.__hash__() == self.signature.__hash__()
 
-                self.source.clear_reachable_cache()
-                if self.source.rooted and not self.destination.rooted:
+                self.enabled = True
+                self.source.edges.add(self)
+                self.destination.reverse_edges.add(self)
+                self.source.parent.all_edges.add(self)
+                if not self.combined_conditions:
+                    self.source.parent.conditionless_edges.add(self)
+                if self.source.rooted:
                     self.source.parent.clear_rooted_cache()
-                self.source.clear_subgroup_cache()
-                self.destination.clear_subgroup_cache()
-                self.source.clear_adjacency_cache()
-                self.destination.clear_adjacency_cache()
+                self.source.parent.invalidate_node_reachability(
+                    {self.source, self.destination})
 
                 self.commit()
 
             def __repr__(self):
+                if self.enabled:
+                    return self.signature
+                else:
+                    return f'{self.signature} (DISABLED)'
+
+            def __hash__(self):
+                try:
+                    return self._hash
+                except AttributeError:
+                    self._hash = self.signature.__hash__()
+                return self.__hash__()
+
+            def __eq__(self, other):
+                return self.__hash__() == other.__hash__()
+
+            def __lt__(self, other):
+                return self.index < other.index
+
+            @property
+            def signature(self):
                 if not self.false_condition:
                     s = (f'{self.source}->{self.destination}: '
                          f'{sorted(self.true_condition)}')
@@ -114,35 +146,30 @@ class Graph(RollbackMixin):
                     s = (f'{self.source}->{self.destination}: '
                          f'{sorted(self.true_condition)} '
                          f'!{sorted(self.false_condition)}')
-                if self.procedural:
+                if self.generated:
                     s = f'{s}*'
-                if not self.enabled:
-                    s = f'{s} (DISABLED)'
                 return s
 
-            def __hash__(self):
-                return hash(self.__repr__())
-
-            def __eq__(self, other):
-                return str(self) == str(other)
-
-            def __lt__(self, other):
-                return self.index < other.index
-
-            @property
+            @cached_property
             def pair(self):
                 candidates = {e for e in self.destination.edges if
                               e.destination is self.source and
                               e.true_condition == self.true_condition and
                               e.false_condition == self.false_condition and
-                              e.procedural == self.procedural}
-                assert len(candidates) <= 1
+                              e.generated == self.generated}
                 if not candidates:
                     return None
-                pair = sorted(candidates)[0]
+                assert len(candidates) == 1
+                pair = list(candidates)[0]
                 return pair
 
+            @cached_property
+            def combined_conditions(self):
+                return self.true_condition | self.false_condition
+
             def is_satisfied_by(self, nodes):
+                if not self.enabled:
+                    return False
                 if self.true_condition and self.true_condition - nodes:
                     return False
                 if self.false_condition and self.false_condition & nodes:
@@ -150,66 +177,71 @@ class Graph(RollbackMixin):
                 return True
 
             def check_is_bridge(self):
-                assert self.enabled
-                before_nodes = self.source.parent.rooted
-                self.enabled = False
-                self.source.clear_reachable_cache()
-                self.source.parent.clear_rooted_cache()
-                after_nodes = self.source.parent.rooted
-                self.enabled = True
-                self.source.clear_reachable_cache()
-                self.source.parent.clear_rooted_cache()
-                if after_nodes - before_nodes:
-                    return -1
-                return before_nodes - after_nodes
-
-            def bidirectional_check_is_bridge(self):
-                assert self.enabled
-                assert self.pair.enabled
-                before_nodes = self.source.parent.rooted
-                self.enabled = False
-                self.pair.enabled = False
-                self.source.clear_reachable_cache()
-                self.pair.source.clear_reachable_cache()
-                self.source.parent.clear_rooted_cache()
-                after_nodes = self.source.parent.rooted
-                self.enabled = True
-                self.pair.enabled = True
-                self.source.parent.clear_rooted_cache()
-                self.source.clear_reachable_cache()
-                self.pair.source.clear_reachable_cache()
-                if after_nodes - before_nodes:
-                    return -1
-                return before_nodes - after_nodes
+                if not self.source.rooted:
+                    return set()
+                done_edges = {self, self.pair}
+                done_nodes = set()
+                nodes = {self.destination}
+                edges = set()
+                if self.destination.rank is None:
+                    minimum_rank = self.source.rank + 1
+                else:
+                    minimum_rank = self.destination.rank
+                assert minimum_rank > 0
+                satisfaction = \
+                    self.source.parent.nodes_by_rank_or_less[minimum_rank-1]
+                while True:
+                    for n in nodes - done_nodes:
+                        done_nodes.add(n)
+                        edges |= n.reverse_edges
+                    test_edges = edges - done_edges
+                    if not test_edges:
+                        break
+                    for e in test_edges:
+                        done_edges.add(e)
+                        if e.source.rank is None:
+                            continue
+                        if not e.is_satisfied_by(satisfaction):
+                            continue
+                        if e.source.rank is not None \
+                                and e.source.rank < minimum_rank:
+                            return set()
+                        nodes.add(e.source)
+                return nodes
 
             def remove(self):
                 self.source.edges.remove(self)
                 self.destination.reverse_edges.remove(self)
+                self.source.parent.all_edges.remove(self)
+                if not self.combined_conditions:
+                    self.source.parent.conditionless_edges.remove(self)
                 if self.source.rooted:
                     self.source.parent.clear_rooted_cache()
-                self.source.clear_reachable_cache()
-                self.source.clear_subgroup_cache()
-                self.destination.clear_subgroup_cache()
-                self.source.clear_adjacency_cache()
-                self.destination.clear_adjacency_cache()
+                self.source.parent.invalidate_node_reachability(
+                    {self.source, self.destination})
 
             def bidirectional_remove(self):
                 self.remove()
-                if self.pair is not None:
+                if self.pair and self.pair is not self:
                     self.pair.remove()
 
         def __init__(self, label, parent):
             self.label = label
             self.parent = parent
             self._hash = hash(self.label)
+            self.rank = None
+            self.sort_signature = random.random()
+            self.force_bridge = False
 
             self.edges = set()
             self.reverse_edges = set()
             self.parent.nodes.add(self)
 
             self.required_nodes = set()
-            self.approach_nodes = set()
+            self.guarantee_nodes = set()
             self.twoway_conditions = set()
+
+            self.commit()
 
         def __repr__(self):
             return self.label
@@ -235,107 +267,30 @@ class Graph(RollbackMixin):
 
         @property
         def rooted(self):
-            if hasattr(self.parent, '_rooted'):
+            if hasattr(self, '_rooted'):
                 return self._rooted
             self.parent.rooted
             return self.rooted
 
         @cached_property
-        def is_procedural_node(self):
-            return self in self.parent.procedural_nodes
+        def is_connectable_node(self):
+            return self in self.parent.connectable
 
-        @property
+        @cached_property
+        def is_interesting(self):
+            return self in self.parent.interesting_nodes
+
+        @cached_property
         def interesting_nodes(self):
-            if hasattr(self, '_interesting_nodes'):
-                return self._interesting_nodes
-            self._interesting_nodes = self.get_interesting_nodes()
-            return self.interesting_nodes
+            return {c for e in self.edges for c in e.combined_conditions}
 
         @property
         def reverse_nodes(self):
             return {e.source for e in self.reverse_edges} | {self}
 
         @property
-        def adjacent_nodes(self):
-            if hasattr(self, '_adjacent_nodes'):
-                return self._adjacent_nodes
-            self._adjacent_nodes = self.reverse_nodes | {e.destination
-                                                         for e in self.edges}
-            return self.adjacent_nodes
-
-        @property
-        def subgroup(self):
-            if not self.is_procedural_node:
-                return frozenset()
-            if hasattr(self, '_subgroup'):
-                return self._subgroup
-            subgroup = {self}
-            seen_nodes = set()
-            while True:
-                previous = set(subgroup)
-                for n in subgroup - seen_nodes:
-                    subgroup |= n.adjacent_nodes
-                    seen_nodes.add(n)
-                if subgroup == previous:
-                    break
-            self._subgroup = frozenset(subgroup & self.parent.procedural_nodes)
-            assert self in self._subgroup
-            for n in self.subgroup:
-                n._subgroup = self.subgroup
-            return self.subgroup
-
-        def clear_subgroup_cache(self):
-            if hasattr(self, '_subgroup'):
-                for n in set(self._subgroup):
-                    if hasattr(n, '_subgroup'):
-                        del(n._subgroup)
-
-        def get_reachable(self, nodes):
-            old_nodes = set(nodes)
-            nodes = frozenset(nodes & self.interesting_nodes)
-            if not hasattr(self, '_reachable_by_interesting'):
-                self._reachable_by_interesting = {}
-            if nodes in self._reachable_by_interesting:
-                return self._reachable_by_interesting[nodes]
-
-            reachable = {self}
-            for e in self.edges:
-                if not e.enabled:
-                    continue
-                if e.is_satisfied_by(nodes):
-                    reachable.add(e.destination)
-
-            self._reachable_by_interesting[nodes] = reachable
-            return self.get_reachable(nodes)
-
-        def get_recursive_reachable(self, nodes=None):
-            if nodes is None:
-                nodes = set()
-                reachable = {self}
-            else:
-                reachable = nodes
-            reachable.add(self)
-            while True:
-                unchanged = set(reachable)
-                for n in unchanged:
-                    reachable |= n.get_reachable(reachable)
-                if unchanged == reachable:
-                    break
-            return reachable
-
-        def get_interesting_nodes(self):
-            return ({c for e in self.edges for c in e.true_condition} |
-                    {c for e in self.edges for c in e.false_condition})
-
-        def clear_reachable_cache(self):
-            if hasattr(self, '_interesting_nodes'):
-                del(self._interesting_nodes)
-            if hasattr(self, '_reachable_by_interesting'):
-                del(self._reachable_by_interesting)
-
-        def clear_adjacency_cache(self):
-            if hasattr(self, '_adjacent_nodes'):
-                del(self._adjacent_nodes)
+        def generated_edges(self):
+            return {e for e in self.all_edges if e.generated}
 
         def add_edge(self, other, condition=None, procedural=False):
             if condition is None:
@@ -347,7 +302,7 @@ class Graph(RollbackMixin):
             return edge
 
         def add_edges(self, other, conditions):
-            for condition in conditions:
+            for condition in sorted(conditions, key=lambda c: sorted(c)):
                 self.add_edge(other, condition)
             self.simplify_edges()
 
@@ -360,17 +315,42 @@ class Graph(RollbackMixin):
                         continue
                     if edge1.destination is not edge2.destination:
                         continue
-                    if edge1.false_condition != edge2.false_condition:
-                        continue
-                    if edge1.true_condition < edge2.true_condition:
+                    if edge1.false_condition >= edge2.false_condition and \
+                            edge1.true_condition <= edge2.true_condition:
                         self.edges.remove(edge2)
+
+        def get_orphanable_old(self):
+            # Get orphans; does not account for edge conditions
+            before_rooted = self.parent.rooted
+            for e in self.edges:
+                e.enabled = False
+            after_rooted = self.parent.fast_get_reachable()
+            for e in self.edges:
+                e.enabled = True
+            return before_rooted - after_rooted
+
+        def get_orphanable_fast(self):
+            before_rooted = self.parent.rooted - {self}
+            after_rooted, after_edges = self.parent.get_avoid_reachable(
+                    avoid_nodes=frozenset({self}))
+            return before_rooted - after_rooted[max(after_rooted)]
+
+        def get_orphanable_slow(self):
+            return self.parent.rooted - self.parent.fast_get_reachable(
+                    avoid_nodes=frozenset({self})) - {self}
+
+        def get_orphanable(self):
+            a = self.get_orphanable_fast()
+            if DEBUG:
+                b = self.get_orphanable_slow()
+                assert a == b
+            return a
 
         def add_required(self, other):
             self.required_nodes.add(other)
 
-        def add_approach(self, other):
-            self.add_required(other)
-            self.approach_nodes.add(other)
+        def add_guarantee(self, other):
+            self.guarantee_nodes.add(other)
 
         def add_twoway_condition(self, condition):
             assert '!' not in condition
@@ -384,20 +364,51 @@ class Graph(RollbackMixin):
         def check_is_reachable(self, avoid_nodes=None):
             return self.parent.check_is_reachable(self, avoid_nodes)
 
-        def commit(self):
-            super().commit()
-            assert self.edges is not self._rollback['edges']
-            for e in self.edges:
-                e.commit()
+        def get_shortest_path(self, avoid_nodes=None):
+            if avoid_nodes is None:
+                avoid_nodes = frozenset()
+            elif isinstance(avoid_nodes, Graph.Node):
+                avoid_nodes = frozenset({avoid_nodes})
+            elif not isinstance(avoid_nodes, frozenset):
+                avoid_nodes = frozenset(avoid_nodes)
+            self.parent.get_avoid_reachable(avoid_nodes=avoid_nodes)
+            stage_nodes, stage_edges = self.parent._avoid_reachable_cache[avoid_nodes]
+            for stage_number in sorted(stage_nodes):
+                if self in stage_nodes[stage_number]:
+                    break
+            else:
+                return None
 
-        def rollback(self):
-            super().rollback()
-            assert self.edges is not self._rollback['edges']
-            for e in self.edges:
-                e.rollback()
+            nodes_path = [self]
+            edges_path = []
+            i = stage_number
+            while True:
+                assert i >= 0
+                if i == 0:
+                    assert nodes_path[0] is self.parent.root
+                    break
 
-        def check_changed_subgroup(self):
-            return self.subgroup != self.initial_subgroup
+                j = i-2
+                while True:
+                    if i >= 2:
+                        edges = stage_edges[i-1] - stage_edges[j]
+                    else:
+                        edges = stage_edges[i-1]
+                    previous_nodes = stage_nodes[i-1]
+                    candidates = [e for e in edges
+                                  if e.destination is nodes_path[0]]
+                    candidates = [e for e in candidates
+                                  if e.is_satisfied_by(previous_nodes)]
+                    if candidates:
+                        break
+                    j -= 1
+
+                chosen = max(candidates)
+                nodes_path.insert(0, chosen.source)
+                edges_path.insert(0, chosen)
+                i = j+1
+
+            return edges_path
 
         def verify_twoway(self):
             if not self.twoway_conditions:
@@ -417,24 +428,41 @@ class Graph(RollbackMixin):
         def verify_required(self):
             if not self.required_nodes:
                 return
-            if not self.check_changed_subgroup():
+            if not any(e.generated for e in self.double_edges):
                 return
+            orphaned = set()
+            for e in self.edges:
+                orphaned |= e.check_is_bridge()
             for r in self.required_nodes:
                 if not r.rooted:
+                    assert r in self.parent.initial_unconnected or \
+                            r.label in self.parent.preset_connections.keys()
+                    raise DoorRouterException(f'{self} requires {r}.')
+                if r in orphaned:
                     raise DoorRouterException(f'{self} requires {r}.')
 
-        def verify_approach(self):
-            if not self.approach_nodes:
-                return
-            if not self.check_changed_subgroup():
+        def verify_bridge(self):
+            # TODO: Try reversing "bridge" exits?
+            if not self.force_bridge:
                 return
             if not self.rooted:
                 return
-            reachable = self.check_is_reachable(
-                    avoid_nodes=self.approach_nodes)
-            if reachable:
+            for e in self.edges:
+                if not e.generated:
+                    continue
+                if not e.check_is_bridge():
+                    raise DoorRouterException(
+                        f'Node {self} reachable from wrong direction.')
+
+        def verify_guarantee(self):
+            if not self.guarantee_nodes:
+                return
+            if not self.rooted:
+                return
+            if self.guarantee_nodes - self.guaranteed:
                 raise DoorRouterException(
-                    f'Node {self} reachable from wrong direction.')
+                    f'Node {self} reachable without guaranteed nodes.')
+            return
 
         def verify(self):
             if DEBUG:
@@ -445,366 +473,137 @@ class Graph(RollbackMixin):
 
             self.verify_twoway()
             self.verify_required()
-            self.verify_approach()
+            self.verify_bridge()
+            self.verify_guarantee()
+            if DEBUG and self.rooted and self.guaranteed:
+                for e in self.edges:
+                    assert e.source.rooted
+                    if not e.destination.rooted:
+                        continue
+                    if e.destination.rank > e.source.rank:
+                        orphans = e.check_is_bridge()
+                        for o in orphans:
+                            assert o.guaranteed >= self.guaranteed
+                if STRICT_GUARANTEE_CHECKS:
+                    for o in self.get_orphanable():
+                        assert o.guaranteed >= self.guaranteed
 
             if DEBUG and self.rooted:
                 assert self in self.parent.rooted
 
-    def __init__(self, node_labels, procedural_labels=None):
-        if procedural_labels is None:
-            procedural_labels = set()
-        procedural_nodes = set()
-        self.root = None
-        self.goal = None
-        self.nodes = set()
-        for label in node_labels:
-            node = self.Node(label, self)
-            if label in procedural_labels:
-                procedural_nodes.add(node)
-        self.procedural_nodes = procedural_nodes
-        self.minimum_coverage = 0.75
-        assert self.procedural_nodes
-
-    @property
-    def rooted(self):
-        if hasattr(self, '_rooted'):
-            return self._rooted
-        #if self.root is None:
-        #    self._rooted = set()
-        #else:
-        #    self._rooted = frozenset(self.root.get_recursive_reachable())
-        #    assert self.root in self._rooted
-        self._rooted = self.reachable_from_root
-        unrooted = self.nodes - self._rooted
-        for n in self._rooted:
-            n._rooted = True
-        for n in unrooted:
-            n._rooted = False
-        if self.root:
-            assert self.root in self._rooted
-            assert self.root not in unrooted
-            assert self.root.rooted
-        return self.rooted
-
-    @property
-    def reachable_from_root(self):
-        if hasattr(self, '_reachable_from_root'):
-            return self._reachable_from_root
-        if self.root is None:
-            return frozenset()
-        reachable_from_root = {self.root}
-        done_nodes = set()
-        done_edges = set()
-        test_edges = set()
-        while True:
-            test_nodes = reachable_from_root - done_nodes
-            if not test_nodes:
-                break
-            for node in test_nodes:
-                for edge in node.edges:
-                    test_edges.add(edge)
-                done_nodes.add(node)
-            for edge in test_edges - done_edges:
-                if edge.is_satisfied_by(reachable_from_root):
-                    assert edge.source in reachable_from_root
-                    reachable_from_root.add(edge.destination)
-                    done_edges.add(edge)
-        self._reachable_from_root = reachable_from_root
-        return self.reachable_from_root
-
-    @property
-    def root_reachable_from(self):
-        # TODO: more robust propagation of edge conditions
-        if hasattr(self, '_root_reachable_from'):
-            return self._root_reachable_from
-        root_reachable_from = {self.root}
-        done_nodes = set()
-        done_edges = set()
-        test_edges = set()
-        while True:
-            test_nodes = root_reachable_from - done_nodes
-            if not test_nodes:
-                break
-            for node in test_nodes:
-                for edge in node.reverse_edges:
-                    test_edges.add(edge)
-                done_nodes.add(node)
-            for edge in test_edges - done_edges:
-                if edge.source.rooted and edge.is_satisfied_by(self.reachable_from_root):
-                #if edge.is_satisfied_by(frozenset()):
-                    assert edge.destination in root_reachable_from
-                    root_reachable_from.add(edge.source)
-                    done_edges.add(edge)
-        self._root_reachable_from = root_reachable_from
-        return self.root_reachable_from
-
-    @property
-    def goal_reached(self):
-        if len(self.rooted) < self.minimum_coverage * len(self.nodes):
-            return False
-        for condition in self.goal:
-            #if condition < (self.reachable_from_root &
-            #                self.root_reachable_from):
-            if condition < self.reachable_from_root:
-                return True
-        return False
-
-    @cached_property
-    def goal_nodes(self):
-        goal_nodes = set()
-        for condition in self.goal:
-            for n in condition:
-                goal_nodes.add(n)
-                goal_nodes |= n.required_nodes
-        return goal_nodes
-
-    def get_by_label(self, label):
-        for n in self.nodes:
-            if n.label == label:
-                return n
-
-    def set_initial_subgroups(self):
-        for n in self.nodes:
-            n.initial_subgroup = n.subgroup
-
-    def set_root(self, node):
-        assert node in self.nodes
-        self.root = node
-        assert self.root in self.procedural_nodes
-        self.clear_rooted_cache()
-        assert self.root.rooted
-
-    def set_goal(self, conditions):
-        self.goal = {frozenset(self.get_by_label(l) for l in c)
-                     for c in conditions}
-
-    def clear_rooted_cache(self):
-        if hasattr(self, '_rooted'):
-            del(self._rooted)
-        if hasattr(self, '_reachable_from_root'):
-            del(self._reachable_from_root)
-        if hasattr(self, '_root_reachable_from'):
-            del(self._root_reachable_from)
-
-    def split_edgestr(self, edgestr, operator):
-        a, b = edgestr.split(operator)
-        a = self.get_by_label(a)
-        b = self.get_by_label(b)
-        if a is None or b is None:
-            raise Exception(f'{edgestr} contains unknown node.')
-        return a, b
-
-    def add_multiedge(self, edgestr, conditions):
-        assert len(conditions) >= 1
-        if '=>' in edgestr:
-            a, b = self.split_edgestr(edgestr, '=>')
-            a.add_edges(b, conditions)
-            b.add_edges(a, conditions)
-            b.add_approach(a)
-        elif '>>' in edgestr:
-            a, b = self.split_edgestr(edgestr, '>>')
-            a.add_edges(b, conditions)
-            a.add_required(b)
-        elif '=' in edgestr:
-            a, b = self.split_edgestr(edgestr, '=')
-            if a is b:
-                a.add_twoway_condition(conditions)
-            else:
-                a.add_edges(b, conditions)
-                b.add_edges(a, conditions)
-        elif '>' in edgestr:
-            a, b = self.split_edgestr(edgestr, '>')
-            a.add_edges(b, conditions)
-        else:
-            raise Exception(f'Invalid multiedge: {edgestr}')
-        return (a, b)
-
-    def check_is_reachable(self, goal_node, avoid_nodes=None):
-        if avoid_nodes is None:
-            avoid_nodes = set()
-
-        nodes = {self.root}
-        done_nodes = set()
-        while True:
-            new_nodes = {n for node in nodes - done_nodes
-                         for n in node.get_reachable(nodes)} - nodes
-            new_nodes -= avoid_nodes
-            if not new_nodes:
-                return False
-            done_nodes |= nodes
-            nodes |= new_nodes
-            if goal_node in nodes:
-                return True
-
-    def get_cached_subgroup_reachability(self, key):
-        CACHE_SIZE = 5000
-        if not hasattr(self, '_subgroup_reachability_cache'):
-            self._subgroup_reachability_cache = {}
-        if key in self._subgroup_reachability_cache:
-            return self._subgroup_reachability_cache[key]
-        return None
-
-    def cache_subgroup_reachability(self, key, reachability):
-        CACHE_SIZE = 5000
-        if not hasattr(self, '_subgroup_reachability_queue'):
-            self._subgroup_reachability_queue = []
-        self._subgroup_reachability_queue.append(key)
-        if len(self._subgroup_reachability_cache) > CACHE_SIZE * 2:
-            to_keep = self._subgroup_reachability_queue[-CACHE_SIZE:]
-            self._subgroup_reachability_queue = to_keep
-            to_keep = set(to_keep)
-            for key in list(self._subgroup_reachability_cache):
-                if key not in to_keep:
-                    del(self._subgroup_reachability_cache[key])
-        self._subgroup_reachability_cache[key] = reachability
-
-    def get_subgroup_reachability(self, nodes):
-        CACHING_ENABLED = False
-        if DEBUG:
-            assert len({n.subgroup for n in nodes}) == 1
-            subgroup = sorted(nodes)[0].subgroup
-            for n in nodes:
-                try:
-                    assert n.subgroup == subgroup
-                    assert n.get_reachable(self.rooted) <= subgroup
-                except:
-                    exit(0)
-                    import pdb; pdb.set_trace()
-                n.clear_reachable_cache()
-                n.clear_subgroup_cache()
-
-        if CACHING_ENABLED:
-            verify_cache = None
-            key0 = nodes
-            key1 = {e for n in nodes for e in n.double_edges}
-            key2a = {c for e in key1 for c in e.true_condition}
-            key2b = {c for e in key1 for c in e.false_condition}
-            key2c = key2a | key2b
-            key2 = {n for n in self.rooted if n in key2c}
-            key = (frozenset(key0), frozenset(key1), frozenset(key2))
-            result = self.get_cached_subgroup_reachability(key)
-            if result is not None:
-                if DEBUG and random.randint(1, 10) == 10:
-                    verify_cache = result
-                else:
-                    return result
-
-        reachability = {n: n.get_reachable(self.rooted) for n in nodes}
-        changed = set(nodes)
-        previous = None
-        while True:
-            old_changed = changed
-            changed = set()
-            updated = False
-            for n1 in nodes:
-                for n2 in old_changed & reachability[n1]:
-                    new_nodes = reachability[n2] - reachability[n1]
-                    if new_nodes:
-                        reachability[n1] |= new_nodes
-                        updated = True
-                        changed.add(n1)
-            if not updated:
-                break
-
-        if CACHING_ENABLED:
-            if verify_cache is not None:
-                assert reachability == verify_cache
-                return reachability
-            self.cache_subgroup_reachability(key, reachability)
-        return reachability
-
-    def reset_orphaned_clusters(self):
-        reconnectable = set()
-        for n in self.nodes - (self.reachable_from_root |
-                               self.root_reachable_from):
-            for e in set(n.double_edges):
-                if e.procedural:
-                    e.remove()
-                    reconnectable.add(e.source)
-                    reconnectable.add(e.destination)
-            n.clear_subgroup_cache()
-            n.clear_reachable_cache()
-        return reconnectable
-
-    def verify_subgroup_connectability(self, subgroup, connectable):
-        reachability = self.get_subgroup_reachability(subgroup)
-        for n in sorted(reachability):
-            if not reachability[n] & connectable:
-                print(f'X: {n} {len(connectable)} {sorted(reachability[n])}')
-                return None
-        return len(set(frozenset(r) for r in reachability.values()))
-
-    def verify_all_connectability(self, connectable):
-        if not self.reachable_from_root & connectable:
-            raise DoorRouterException(f'Orphaned root cluster.')
-        return
-        if self.goal_reached:
-            return
-        subgroups = {n.subgroup
-                     for n in self.procedural_nodes-self.reachable_from_root
-                     if n.check_changed_subgroup()}
-        unrooted = self.root.subgroup - self.root_reachable_from
-        if unrooted:
-            subgroups.add(unrooted)
-        total_score = 0
-        subgroup_sorter = lambda subgroup: ' '.join([str(g) for g in
-                                                     sorted(subgroup)])
-        if self.goal_reached:
-            subgroups = {unrooted}
-        for g in subgroups:
-            for n in g:
-                n.clear_subgroup_cache()
-                n.clear_reachable_cache()
-        for subgroup in sorted(subgroups, key=subgroup_sorter):
-            score = self.verify_subgroup_connectability(subgroup,
-                                                        connectable)
-            if score is None:
-                raise DoorRouterException(
-                        f'Orphaned cluster: {sorted(subgroup)[0]}')
-            total_score += score
-        #if total_score > len(connectable & self.reachable_from_root):
-        #    raise DoorRouterException(
-        #            f'Insufficient rooted outlets for clusters.')
-
-    def commit(self):
-        super().commit()
-        for n in self.nodes:
-            n.commit()
-
-    def rollback(self):
-        super().rollback()
-        for n in self.nodes:
-            n.rollback()
-
-    def verify(self):
-        for n in self.nodes:
-            n.verify()
-
-
-class DoorRouter:
-    def __init__(self, filename, node_labels, connectable_labels, root_label,
-                 preset_connections=None,
+    def __init__(self, filename, preset_connections=None,
                  strict_validator=None, lenient_validator=None):
+        with open(filename) as f:
+            self.config = yaml.load(f.read(), Loader=yaml.SafeLoader)
+        self.config['config_filename'] = filename
+        with open(DEFAULT_CONFIG_FILENAME) as f:
+            defaults = yaml.load(f.read(), Loader=yaml.SafeLoader)
+        for key in defaults:
+            if key not in self.config:
+                self.config[key] = defaults[key]
+                print(f'Using default value {defaults[key]} for "{key}".')
         self.strict_validator = strict_validator
         self.lenient_validator = lenient_validator
 
-        if preset_connections:
-            procedural_labels = connectable_labels | preset_connections.keys()
+        if preset_connections is None:
+            preset_connections = {}
+        self.preset_connections = preset_connections
+        if 'seed' in self.config:
+            self.seed = self.config['seed']
         else:
-            procedural_labels = connectable_labels
-        assert root_label in procedural_labels
-        self.graph = Graph(node_labels, procedural_labels)
+            self.seed = random.randint(0, 9999999999)
 
-        if preset_connections is not None:
-            for alabel in preset_connections:
-                a = self.graph.get_by_label(alabel)
-                for blabel, conditions in preset_connections[alabel]:
-                    b = self.graph.get_by_label(blabel)
-                    a.add_edge(b, conditions)
+        self.PREINITIALIZE_ATTRS = set()
+        self.PREINITIALIZE_ATTRS |= set(dir(self))
+        self.initialize()
+
+    @property
+    def description(self):
+        s = ''
+        s += 'Maze Generation Settings:\n'
+        s += f'  seed:{"":15} {self.seed}\n'
+        for key, value in self.config.items():
+            if key == 'seed':
+                continue
+            key = f'{key}:'
+            s += f'  {key:20} {value}\n'
+        if self.num_loops > 0:
+            s += f'\nCharacteristics:\n'
+            key = 'longest path:'
+            value = max(n.rank for n in self.nodes if n.rank is not None)
+            s += f'  {key:20} {value}\n'
+            if not hasattr(self, 'solutions'):
+                self.generate_solutions()
+            key = 'longest win path:'
+            value = self.solutions[-1][1][-1].destination.rank
+            s += f'  {key:20} {value}\n'
+            required_nodes = set()
+            for _, path in self.solutions:
+                required_nodes |= {p.destination for p in path}
+                required_nodes &= self.connectable
+            key = 'required nodes:'
+            value = len(required_nodes)
+            s += f'  {key:20} {value}\n'
+            key = 'total nodes:'
+            value = len(self.connectable)
+            s += f'  {key:20} {value}\n'
+            key = 'generated edges:'
+            value = len({e for e in self.all_edges if e.generated
+                         and e.pair and e.source < e.destination})
+            s += f'  {key:20} {value}\n'
+            key = 'static edges:'
+            value = len({e for e in self.all_edges if (not e.generated)
+                         and e.pair and e.source < e.destination})
+            s += f'  {key:20} {value}\n'
+            key = 'trap doors:'
+            value = len({e for e in self.all_edges if e.generated
+                         and e.pair is None and e.source is not e.destination})
+            s += f'  {key:20} {value}\n'
+            key = 'generation loops:'
+            value = self.num_loops
+            s += f'  {key:20} {value}\n'
+
+        return s.strip()
+
+    def initialize(self):
+        random.seed(self.seed)
+
+        self.root = None
+        self.nodes = set()
+        self.all_edges = set()
+        self.conditionless_edges = set()
+        self.connectable = set()
+        self.num_loops = -1
+
+        nodes_filename = self.config['nodes_filename']
+        try:
+            lines = read_lines_nocomment(nodes_filename)
+        except FileNotFoundError:
+            from .tablereader import tblpath
+            nodes_filename = path.join(tblpath, nodes_filename)
+            lines = read_lines_nocomment(nodes_filename)
+
+        for line in read_lines_nocomment(nodes_filename):
+            if line.startswith('+'):
+                self.Node(line[1:], self)
+            else:
+                self.connectable.add(self.Node(line, self))
+
+        assert self.connectable
+        self.unconnected = self.connectable - {
+                self.get_by_label(l) for l in self.preset_connections.keys()}
 
         self.definitions = {}
 
-        for line in read_lines_nocomment(filename):
+        logic_filename = self.config['logic_filename']
+        try:
+            lines = read_lines_nocomment(logic_filename)
+        except FileNotFoundError:
+            from .tablereader import tblpath
+            logic_filename = path.join(tblpath, logic_filename)
+            lines = read_lines_nocomment(logic_filename)
+
+        for line in lines:
             while '  ' in line:
                 line = line.replace('  ', ' ')
 
@@ -815,27 +614,44 @@ class DoorRouter:
                         self.expand_requirements(requirements)
                 continue
 
+            if line.startswith('.start'):
+                _, root_label = line.split(' ')
+                self.set_root(self.get_by_label(root_label))
+                continue
+
             if line.startswith('.goal'):
                 _, requirements = line.split(' ')
                 requirements = self.expand_requirements(requirements)
-                self.graph.set_goal(requirements)
+                self.set_goal(requirements)
+                continue
+
+            if line.startswith('.require'):
+                _, node_label, requirements = line.split(' ')
+                node = self.get_by_label(node_label)
+                requirements = self.expand_requirements(requirements)
+                for req in requirements:
+                    for r in req:
+                        node.add_required(self.get_by_label(r))
                 continue
 
             if line.startswith('.guarantee'):
                 _, node_label, requirements = line.split(' ')
-                node = self.graph.get_by_label(node_label)
+                node = self.get_by_label(node_label)
                 requirements = self.expand_requirements(requirements)
                 for req in requirements:
                     for r in req:
-                        node.add_approach(self.graph.get_by_label(r))
+                        node.add_guarantee(self.get_by_label(r))
                 continue
 
             if line.startswith('.unreachable'):
                 _, node_label = line.split(' ')
-                node = self.graph.get_by_label(node_label)
-                self.graph.nodes.remove(node)
-                self.graph.procedural_nodes.remove(node)
+                node = self.get_by_label(node_label)
+                self.nodes.remove(node)
+                self.connectable.remove(node)
+                self.unconnected.remove(node)
                 continue
+
+            assert not line.startswith('.')
 
             if ' ' in line:
                 edge, conditions = line.split()
@@ -855,15 +671,246 @@ class DoorRouter:
 
             if len(conditions) == 0:
                 conditions = {frozenset()}
-            a, b = self.graph.add_multiedge(edge, conditions)
+            a, b = self.add_multiedge(edge, conditions)
 
-        self.graph.set_initial_subgroups()
-        self.graph.set_root(self.graph.get_by_label(root_label))
-        self.graph.verify()
-        self.graph.commit()
-        self.connectable = {n for n in self.graph.nodes
-                            if n.label in connectable_labels} \
-                                    & self.graph.procedural_nodes
+        if self.preset_connections is not None:
+            for alabel in self.preset_connections:
+                a = self.get_by_label(alabel)
+                for blabel, conditions in self.preset_connections[alabel]:
+                    b = self.get_by_label(blabel)
+                    assert a in self.connectable
+                    assert b in self.connectable
+                    assert a not in self.unconnected
+                    assert b not in self.unconnected
+                    a.add_edge(b, conditions)
+
+        assert self.unconnected <= self.connectable <= self.nodes
+        num_nodes = int(round(self.config['map_size'] * len(self.unconnected)))
+        reduced = self.necessary_nodes & self.unconnected
+        while True:
+            candidates = sorted(self.unconnected - reduced)
+            if not candidates:
+                break
+            chosen = random.choice(candidates)
+            if chosen.guarantee_nodes and random.random() \
+                    > self.config['map_size']**2:
+                continue
+            reduced.add(chosen)
+            while True:
+                old_reduced = set(reduced)
+                for n in old_reduced:
+                    reduced |= n.interesting_nodes
+                    for e in n.edges:
+                        reduced.add(e.destination)
+                    reduced |= n.required_nodes
+                if reduced == old_reduced:
+                    break
+            if len(reduced & self.unconnected) >= num_nodes:
+                break
+
+        for n in reduced:
+            assert n.required_nodes <= reduced
+        assert self.necessary_nodes & self.unconnected == \
+                self.necessary_nodes & reduced & self.unconnected
+        self.unconnected = reduced & self.unconnected
+        self.initial_unconnected = set(self.unconnected)
+
+        assert self.unconnected <= self.connectable <= self.nodes
+        self.verify()
+        self.commit()
+
+    def reinitialize(self):
+        random.seed(self.seed)
+        self.seed = random.randint(0, 9999999999)
+        post_initialize_attrs = set(dir(self)) - self.PREINITIALIZE_ATTRS
+        for attr in post_initialize_attrs:
+            delattr(self, attr)
+        self.initialize()
+
+    @property
+    def rooted(self):
+        return self.reachable_from_root
+
+    @property
+    def reachable_from_root(self):
+        if hasattr(self, '_reachable_from_root'):
+            return self._reachable_from_root
+
+        if DEBUG:
+            print('FIND REACHABLE FROM ROOT')
+
+        for n in self.nodes:
+            if hasattr(n, 'guaranteed'):
+                del(n.guaranteed)
+                n.rank = None
+        self.nodes_by_rank_or_less = defaultdict(set)
+        self.nodes_by_rank = defaultdict(set)
+        self.root.guaranteed = set()
+        nodes = {self.root}
+        edges = set()
+        done_nodes = set()
+        done_edges = set()
+        rank = 0
+        while True:
+            self.nodes_by_rank[rank] = nodes - done_nodes
+            self.nodes_by_rank_or_less[rank] = nodes
+            for n in self.nodes_by_rank[rank]:
+                n.rank = rank
+                edges |= n.edges
+            rank += 1
+            done_nodes |= nodes
+            for e in edges - done_edges:
+                if e.is_satisfied_by(done_nodes):
+                    if hasattr(e.destination, 'guaranteed'):
+                        e.destination.guaranteed &= e.true_condition
+                    else:
+                        e.destination.guaranteed = set(e.true_condition)
+                    if e.destination.is_interesting:
+                        e.destination.guaranteed.add(e.destination)
+                    nodes.add(e.destination)
+                    done_edges.add(e)
+            if not nodes - done_nodes:
+                break
+
+        if DEBUG:
+            assert nodes == self.fast_get_reachable()
+        self._reachable_from_root = nodes
+        unrooted = self.nodes - nodes
+        for n in nodes:
+            n._rooted = True
+            assert n.rank is not None
+        for n in unrooted:
+            n._rooted = False
+            n.rank = None
+
+        nodes_with_guarantees = {n for n in nodes if n.guaranteed}
+        while True:
+            updated = False
+            for n1 in set(nodes_with_guarantees):
+                for n2 in list(n1.guaranteed):
+                    if n2.guaranteed - n1.guaranteed:
+                        n1.guaranteed |= n2.guaranteed
+                        updated = True
+                for e in n1.edges:
+                    break
+                    if e.destination.rooted and \
+                            e.destination.rank > e.source.rank:
+                        for o in e.check_is_bridge():
+                            if n1.guaranteed - o.guaranteed:
+                                o.guaranteed |= n1.guaranteed
+                                updated = True
+                                nodes_with_guarantees.add(o)
+            if not updated:
+                break
+
+        if STRICT_GUARANTEE_CHECKS:
+            for n1 in nodes_with_guarantees & self.interesting_nodes:
+                for o in n1.get_orphanable():
+                    if n1.guaranteed - o.guaranteed:
+                        o.guaranteed |= n1.guaranteed
+
+        return self.reachable_from_root
+
+    @property
+    def root_reachable_from(self):
+        if hasattr(self, '_root_reachable_from'):
+            return self._root_reachable_from
+        self.reachable_from_root
+
+        if DEBUG:
+            print('FIND ROOT REACHABLE FROM')
+
+        root_reachable_from = {self.root}
+        done_nodes = set()
+        done_edges = set()
+        test_edges = set()
+        counter = 0
+        while True:
+            counter += 1
+            test_nodes = root_reachable_from - done_nodes
+            if not test_nodes:
+                break
+            for node in test_nodes:
+                for edge in node.reverse_edges:
+                    test_edges.add(edge)
+                done_nodes.add(node)
+            for edge in sorted(test_edges - done_edges):
+                if not edge.source.rooted:
+                    continue
+                satisfaction = (self.nodes_by_rank_or_less[edge.source.rank-1]
+                                & root_reachable_from) | edge.source.guaranteed
+                if STRICT_GUARANTEE_CHECKS:
+                    satisfaction = edge.source.guaranteed
+                if edge.is_satisfied_by(satisfaction):
+                    root_reachable_from.add(edge.source)
+                    done_edges.add(edge)
+        self._root_reachable_from = root_reachable_from
+        return self.root_reachable_from
+
+    @property
+    def goal_reached(self):
+        num_connected = len(self.initial_unconnected) - len(self.unconnected)
+        if num_connected / len(self.initial_unconnected) < \
+                self.config['map_strictness']:
+            return False
+        for condition in self.goal:
+            if condition < (self.reachable_from_root &
+                            self.root_reachable_from):
+                return True
+        return False
+
+    @cached_property
+    def goal_nodes(self):
+        goal_nodes = set()
+        for condition in self.goal:
+            for n in condition:
+                goal_nodes.add(n)
+                goal_nodes |= n.required_nodes
+        return goal_nodes
+
+    @property
+    def necessary_nodes(self):
+        necessary = set(self.goal_nodes)
+        necessary.add(self.root)
+        while True:
+            old_necessary = set(necessary)
+            for n in old_necessary:
+                if n in self.unconnected:
+                    continue
+                for e in n.reverse_edges:
+                    necessary.add(e.source)
+                    necessary |= e.source.interesting_nodes
+                    if e.source in self.unconnected:
+                        continue
+            if necessary == old_necessary:
+                break
+        return necessary
+
+    @property
+    def interesting_nodes(self):
+        return {n for e in self.all_edges for n in e.combined_conditions}
+
+    def get_by_label(self, label):
+        for n in self.nodes:
+            if n.label == label:
+                return n
+
+    def set_root(self, node):
+        assert node in self.nodes
+        self.root = node
+        assert self.root in self.connectable
+        self.clear_rooted_cache()
+        assert self.root.rooted
+
+    def set_goal(self, conditions):
+        self.goal = {frozenset(self.get_by_label(l) for l in c)
+                     for c in conditions}
+
+    def clear_rooted_cache(self):
+        if hasattr(self, '_reachable_from_root'):
+            del(self._reachable_from_root)
+        if hasattr(self, '_root_reachable_from'):
+            del(self._root_reachable_from)
 
     def expand_requirements(self, requirements):
         if requirements.startswith('suggest:'):
@@ -903,70 +950,217 @@ class DoorRouter:
                     result.remove(compare)
         return result
 
-    def prevalidate_twoway_conditions(self):
-        all_twoways = set()
-        for n in self.connectable:
-            if n.twoway_conditions:
-                assert len(n.twoway_conditions) == 1
-                all_twoways.add(list(n.twoway_conditions)[0])
+    def split_edgestr(self, edgestr, operator):
+        a, b = edgestr.split(operator)
+        a = self.get_by_label(a)
+        b = self.get_by_label(b)
+        if a is None or b is None:
+            raise Exception(f'{edgestr} contains unknown node.')
+        return a, b
 
-        for twoway in all_twoways:
-            count = len([n for n in self.connectable
-                         if n.twoway_conditions == {twoway}])
-            assert count > 0
-            assert count % 2 == 0
+    def add_multiedge(self, edgestr, conditions):
+        assert len(conditions) >= 1
+        if '=>' in edgestr:
+            a, b = self.split_edgestr(edgestr, '=>')
+            a.add_edges(b, conditions)
+            b.add_edges(a, conditions)
+            b.force_bridge = True
+        elif '>>' in edgestr:
+            a, b = self.split_edgestr(edgestr, '>>')
+            a.add_edges(b, conditions)
+            a.add_required(b)
+        elif '=' in edgestr:
+            a, b = self.split_edgestr(edgestr, '=')
+            if a is b:
+                a.add_twoway_condition(conditions)
+            else:
+                a.add_edges(b, conditions)
+                b.add_edges(a, conditions)
+        elif '>' in edgestr:
+            a, b = self.split_edgestr(edgestr, '>')
+            a.add_edges(b, conditions)
+        else:
+            raise Exception(f'Invalid multiedge: {edgestr}')
+        return (a, b)
+
+    def fast_get_reachable(self, avoid_nodes=None):
+        if avoid_nodes is None:
+            avoid_nodes = set()
+        done_nodes = set(avoid_nodes)
+        nodes = {self.root}
+        edges = set()
+        done_edges = set()
+        while True:
+            for n in nodes - done_nodes:
+                edges |= n.edges
+            done_nodes |= nodes
+            for e in edges - done_edges:
+                if e.is_satisfied_by(done_nodes-avoid_nodes):
+                    nodes.add(e.destination)
+                    done_edges.add(e)
+            if not nodes - done_nodes:
+                break
+        return nodes - avoid_nodes
+
+    def check_is_reachable_old(self, goal_node, avoid_nodes=None):
+        if avoid_nodes is None:
+            avoid_nodes = set()
+        reachable = {self.root}
+        done_nodes = set(avoid_nodes)
+        done_edges = set()
+        test_edges = set()
+        while True:
+            test_nodes = reachable - done_nodes
+            if not test_nodes:
+                break
+            for node in test_nodes:
+                for edge in node.edges:
+                    if edge.destination in done_nodes:
+                        continue
+                    test_edges.add(edge)
+                done_nodes.add(node)
+            for edge in test_edges - done_edges:
+                if edge.is_satisfied_by(reachable):
+                    if edge.destination is goal_node:
+                        return True
+                    reachable.add(edge.destination)
+                    done_edges.add(edge)
+        return False
+
+    def get_avoid_reachable(self, avoid_nodes=None, debug=False):
+        if avoid_nodes is None:
+            assert not hasattr(self, '_reachable_from_root')
+            avoid_nodes = frozenset()
+            raise Exception(
+                    'Please use alternate method for standard reachability.')
+        if not hasattr(self, '_avoid_reachable_cache'):
+            self._avoid_reachable_cache = {}
+            self._avoid_reachable_invalidated = {}
+        stage_nodes = {}
+        stage_edges = {}
+        stage = 0
+        nodes = {self.root}
+        edges = set(self.root.edges)
+        done_nodes = set(avoid_nodes)
+        done_edges = set()
+        if avoid_nodes in self._avoid_reachable_cache:
+            cached_nodes, cached_edges = \
+                    self._avoid_reachable_cache[avoid_nodes]
+            invalid = self._avoid_reachable_invalidated[avoid_nodes]
+            if not invalid:
+                return cached_nodes, cached_edges
+        else:
+            cached_nodes, cached_edges = None, None
+
+        if debug:
+            cached_nodes, cached_edges = None, None
+
+        while True:
+            if cached_nodes:
+                if stage not in cached_nodes:
+                    cached_nodes, cached_edges = None, None
+                    continue
+                invalid_nodes = cached_nodes[stage] & \
+                        self._avoid_reachable_invalidated[avoid_nodes]
+                if invalid_nodes:
+                    if stage > 0:
+                        done_nodes = set(cached_nodes[stage] | avoid_nodes)
+                        done_edges = set(cached_edges[stage-1] &
+                                         self.conditionless_edges)
+                        nodes = set(cached_nodes[stage])
+                        edges = set(cached_edges[stage] & self.all_edges)
+                        for n in invalid_nodes:
+                            edges |= n.edges
+                    cached_nodes, cached_edges = None, None
+                    continue
+                else:
+                    stage_nodes[stage] = cached_nodes[stage]
+                    stage_edges[stage] = cached_edges[stage]
+                    if stage+1 not in cached_nodes:
+                        break
+                    stage += 1
+                    continue
+
+            stage_nodes[stage] = frozenset(nodes)
+            stage_edges[stage] = frozenset(edges)
+            for e in edges - done_edges:
+                if e.is_satisfied_by(stage_nodes[stage]):
+                    if e.destination not in done_nodes:
+                        nodes.add(e.destination)
+                    done_edges.add(e)
+            for n in nodes - done_nodes:
+                edges |= n.edges
+                done_nodes.add(n)
+            if nodes == stage_nodes[stage]:
+                break
+            stage += 1
+
+        self._avoid_reachable_cache[avoid_nodes] = (stage_nodes, stage_edges)
+        self.mark_valid_reachability_cache(avoid_nodes)
+        assert stage_nodes is not None
+        return stage_nodes, stage_edges
+
+    def invalidate_node_reachability(self, nodes):
+        if not hasattr(self, '_avoid_reachable_cache'):
+            return
+        for avoid_nodes in sorted(self._avoid_reachable_cache):
+            self._avoid_reachable_invalidated[avoid_nodes] |= nodes
+
+    def mark_valid_reachability_cache(self, avoid_nodes):
+        self._avoid_reachable_invalidated[avoid_nodes] = set()
+
+    def check_is_reachable_new(self, goal_node, avoid_nodes=None):
+        # new method seems to be equal speed but preserves more useful info
+        nodes, edges = self.get_avoid_reachable(avoid_nodes)
+        if DEBUG:
+            bnodes, bedges = self.get_avoid_reachable(avoid_nodes, debug=True)
+            assert nodes == bnodes
+            assert edges == bedges
+        return goal_node in nodes[max(nodes)]
+
+    def check_is_reachable(self, goal_node, avoid_nodes=None):
+        if DEBUG:
+            a = self.check_is_reachable_old(goal_node, avoid_nodes)
+            b = self.check_is_reachable_new(goal_node, avoid_nodes)
+            assert a == b
+        return self.check_is_reachable_new(goal_node, avoid_nodes)
+
+    def commit(self, version=None):
+        super().commit(version)
+        for n in self.nodes:
+            n.commit(version)
+
+    def rollback(self, version=None):
+        super().rollback(version)
+        for n in self.nodes:
+            n.rollback(version)
+
+    def verify(self):
+        for n in sorted(self.nodes):
+            n.verify()
 
     def procedural_add_edge(self, strict_candidates, lenient_candidates):
-        options = sorted(self.connectable)
-        requirement = set()
-        requiring = set()
         options = []
-        for o in sorted(self.connectable):
-            if o.required_nodes:
-                requiring.add(o)
-                requirement |= o.required_nodes
-                if o.required_nodes <= self.graph.rooted:
-                    options.append(o)
-            else:
+        for o in sorted(self.unconnected):
+            if not o.rooted:
+                continue
+            require_guarantee = o.required_nodes | o.guarantee_nodes
+            if require_guarantee <= self.rooted:
                 options.append(o)
 
-        if False and self.graph.goal_reached:
-            options = [o for o in options
-                       if o.rooted or o in self.graph.root_reachable_from]
-        elif random.choice([True, True, True, False]):
-            options = [o for o in options if o.rooted]
-        if False and random.choice([True, False]):
-            temp = [o for o in options if o.twoway_conditions]
-            options = temp or options
         a = random.choice(options)
-        others = set(n for n in self.connectable
+        others = set(n for n in self.unconnected
                      if n.twoway_conditions == a.twoway_conditions)
-        others.remove(a)
-        if False and self.graph.goal_reached and random.choice([True, True, False]):
-            others &= self.graph.rooted
+        if random.random() > self.config['trap_doors']:
+            others.remove(a)
 
         if a in strict_candidates:
             others &= strict_candidates[a]
 
-        if a.rooted and random.choice([True, True, True, False]):
-            temp = set()
-            for n in self.graph.goal_nodes:
-                if not n.rooted:
-                    temp |= n.subgroup
-            temp &= others
-            others = temp or others
-        if False and a.rooted and random.choice([True, self.graph.goal_reached, False]):
-            temp = others - (self.graph.reachable_from_root &
-                             self.graph.root_reachable_from)
-            temp &= (self.graph.reachable_from_root |
-                     self.graph.root_reachable_from)
-            others = temp or others
-        if False and a.rooted and random.choice([True, False]):
-            temp = set()
-            for n in requirement:
-                temp |= n.subgroup
-            temp &= others
-            others = temp or others
+        if a.rooted and random.random() < self.config['progression_speed']:
+            temp = others & self.goal_nodes
+            if temp:
+                others = temp
 
         temp = others - self.discourage_nodes[a]
         if temp:
@@ -980,79 +1174,150 @@ class DoorRouter:
                 others = temp
 
         if others:
-            b = random.choice(sorted(others))
-            others.remove(b)
+            if a.rooted and self.config['linearity'] > 0:
+                unranked = [n for n in others if n.rank is None]
+                ranked = [n for n in others if n.rank is not None]
+                ranked = sorted(ranked, key=lambda n: (abs(a.rank-n.rank),
+                                                       n.sort_signature, n))
+                unranked = sorted(unranked,
+                                  key=lambda n: (n.sort_signature, n))
+                others = unranked + ranked
+                index = 1 - (random.random() ** (1-self.config['linearity']))
+                max_index = len(others)-1
+                b = others[int(round(index * max_index))]
+            else:
+                others = sorted(others)
+                b = random.choice(others)
         else:
             b = a
 
-        #print(f'ADDING {a} {b}')
         edge_ab = a.add_edge(b, procedural=True)
         edge_ba = b.add_edge(a, procedural=True)
         self.discourage_nodes[a].add(b)
         self.discourage_nodes[b].add(a)
+        self.unconnected -= {a, b}
+        if DEBUG:
+            print(f'ADD {a} {b}')
 
-        new_connectable = self.connectable - {a, b}
-        return new_connectable
-
-    def procedural_remove_edge(self, removal_suggestion):
-        twoways = []
-        for c in removal_suggestion:
-            if c.twoway_conditions not in twoways:
-                twoways.append(c.twoway_conditions)
-        all_edges = {e for n in self.graph.nodes
-                     for e in n.double_edges if e.procedural
-                     and e.source.twoway_conditions in twoways
-                     }
-                     #and (e.source.rooted or e.destination.rooted)}
+    def procedural_remove_edge(self):
+        all_edges = {e for e in self.all_edges if e.generated}
         temp = all_edges - self.discourage_edges
         if temp:
             all_edges = temp
         else:
             self.discourage_edges = set()
-        try:
-            assert all_edges
-        except:
-            import pdb; pdb.set_trace()
-        e = random.choice(sorted(all_edges))
-        #if e.source.twoway_conditions not in twoways:
-        #    continue
+        assert all_edges
+        all_edges = sorted(all_edges)
+        random.shuffle(all_edges)
+        for e in all_edges:
+            if not e.check_is_bridge():
+                break
         self.discourage_edges.add(e)
         self.discourage_edges.add(e.pair)
         a, b = e.source, e.destination
         self.discourage_nodes[a].add(b)
         self.discourage_nodes[b].add(a)
-        #assert a.rooted or b.rooted
-        assert not self.connectable & {a, b}
-        new_connectable = self.connectable | {a, b}
-        #print(f'REMOVING {e}')
-        old_rooted = self.graph.rooted
+        assert not self.unconnected & {a, b}
+        old_rooted = self.rooted
         e.bidirectional_remove()
-        return new_connectable
+        self.unconnected |= {a, b}
+        if DEBUG:
+            print(f'REMOVE {a} {b}')
+
+    def handle_trap_doors(self):
+        if self.config['trap_doors'] <= 0:
+            return
+        print('Adding trap doors...')
+        self.verify()
+        assert self.root_reachable_from == self.reachable_from_root
+        edges = [e for e in self.all_edges if e.source.rooted]
+        trap_doors = [e for e in edges if e.source is e.destination]
+        for e in sorted(trap_doors):
+            if DEBUG:
+                self.verify()
+            rank = e.source.rank
+            candidates = sorted([
+                n for n in self.connectable
+                if n.rank is not None and n.rank <= rank
+                and n.twoway_conditions == e.source.twoway_conditions])
+            candidates.remove(e.source)
+            if not candidates:
+                if DEBUG:
+                    print('TRAP', new_edge)
+                continue
+            new_destination = random.choice(candidates)
+            try:
+                new_edge = e.source.add_edge(new_destination,
+                                             procedural=True)
+                if DEBUG:
+                    print('TRAP', new_edge)
+                self.verify()
+                if self.root_reachable_from != self.reachable_from_root:
+                    raise DoorRouterException(str(new_edge))
+                e.remove()
+            except DoorRouterException:
+                new_edge.remove()
+        self.verify()
+        assert self.root_reachable_from == self.reachable_from_root
+
+    def generate_solutions(self, goal_nodes=None):
+        print('Generating solution paths...')
+        if not goal_nodes:
+            goal_nodes = set(self.goal_nodes)
+        paths = {}
+        while True:
+            for n in sorted(goal_nodes, key=lambda n: n.rank):
+                if n in paths:
+                    continue
+                paths[n] = n.get_shortest_path(avoid_nodes=frozenset({
+                    a for a in self.nodes
+                    if a.rank is not None and a.rank > n.rank}))
+                for e in paths[n]:
+                    for c in e.true_condition:
+                        goal_nodes.add(c)
+            if goal_nodes == set(paths.keys()):
+                break
+
+        abridged_paths = []
+        seen_edges = set()
+        for n in sorted(goal_nodes, key=lambda n: (n.rank, n)):
+            path = paths[n]
+            seen_path = [p for p in path if p in seen_edges]
+            if seen_path:
+                start = seen_path[-1]
+            else:
+                start = path[0]
+                assert start.source is self.root
+            assert path.count(start) == 1
+            assert len(path) == len(set(path))
+            path = path[path.index(start):]
+            seen_edges |= set(path)
+            abridged_paths.append((n, path))
+
+        self.solutions = abridged_paths
+        return self.solutions
 
     def connect_everything(self):
-        # TODO: linearity controls
-        # TODO: 1+ trap doors
-        # TODO: RNG leaks
-        # TODO: Count median cycles for successful run
-
-        self.prevalidate_twoway_conditions()
+        PROGRESS_BAR_LENGTH = 20
+        PROGRESS_BAR_INTERVAL = (self.config['retry_limit'] //
+                                 PROGRESS_BAR_LENGTH)
 
         strict_candidates = defaultdict(set)
         lenient_candidates = defaultdict(set)
         if self.strict_validator:
-            for n1 in self.connectable:
-                for n2 in self.connectable:
-                    if n1 < n2 and self.strict_validator(n1, n2):
+            for n1 in self.unconnected:
+                for n2 in self.unconnected:
+                    if n1 <= n2 and self.strict_validator(n1, n2):
                         strict_candidates[n1].add(n2)
                         strict_candidates[n2].add(n1)
 
         if self.lenient_validator:
-            for n1 in self.connectable:
-                for n2 in self.connectable:
-                    if n1 < n2 and self.lenient_validator(n1, n2):
+            for n1 in self.unconnected:
+                for n2 in self.unconnected:
+                    if n1 <= n2 and self.lenient_validator(n1, n2):
                         lenient_candidates[n1].add(n2)
                         lenient_candidates[n2].add(n1)
-            for n in self.connectable:
+            for n in self.unconnected:
                 if n in strict_candidates and strict_candidates[n]:
                     lenient_candidates[n] = (lenient_candidates[n] &
                                              strict_candidates[n])
@@ -1060,81 +1325,96 @@ class DoorRouter:
         self.discourage_nodes = defaultdict(set)
         self.discourage_edges = set()
 
-        #assert len(connectable) % 2 == 0
         failures = 0
         start_time = time()
-        assert self.connectable
-        initial_connectable = set(self.connectable)
-        random.random()
+        initial_unconnected = set(self.unconnected)
+        self.num_loops = 0
+        previous_progress_bar = 0
         while True:
-            goal_reached = self.graph.goal_reached
+            self.num_loops += 1
+
+            goal_reached = self.goal_reached
             if goal_reached:
-                self.connectable |= self.graph.reset_orphaned_clusters()
-                if (self.graph.goal_nodes & self.graph.rooted) <= self.graph.root_reachable_from:
-                    pass
-                if self.graph.root_reachable_from == self.graph.reachable_from_root:
-                    import pdb; pdb.set_trace()
+                if self.root_reachable_from >= self.reachable_from_root:
+                    assert self.root_reachable_from == self.reachable_from_root
+                    break
 
-            if time() - start_time > MAX_WAIT:
-                break
+            if self.num_loops // PROGRESS_BAR_INTERVAL > previous_progress_bar:
+                previous_progress_bar += 1
+                if goal_reached:
+                    stdout.write('+')
+                else:
+                    stdout.write('.')
+                stdout.flush()
 
-            backup_connectable = set(self.connectable)
+            if self.num_loops > self.config['retry_limit_close'] or (
+                    self.num_loops > self.config['retry_limit']
+                    and not goal_reached):
+                raise DoorRouterException(f'Failed to build maze within '
+                                          f'{self.num_loops-1} operations.')
+            backup_unconnected = set(self.unconnected)
+
             if DEBUG:
-                self.graph.verify()
+                self.verify()
 
             add_edge = False
-            if self.connectable:
-                assert self.connectable & self.graph.rooted
+            if self.unconnected:
+                assert self.unconnected & self.rooted
                 if failures <= 1:
                     add_edge = True
-                elif len(initial_connectable) == len(self.connectable):
+                elif len(initial_unconnected) == len(self.unconnected):
                     add_edge = True
                 elif random.random() > ((1/failures)**0.5):
                     add_edge = True
                 else:
                     add_edge = False
-                    removal_suggestion = self.connectable
-            else:
-                unrooted = self.graph.nodes - (self.graph.reachable_from_root &
-                                               self.graph.root_reachable_from)
-                if not unrooted:
-                    break
-                removal_suggestion = unrooted
 
             if add_edge:
-                new_connectable = self.procedural_add_edge(strict_candidates,
-                                                           lenient_candidates)
+                self.procedural_add_edge(strict_candidates, lenient_candidates)
             else:
-                new_connectable = \
-                        self.procedural_remove_edge(removal_suggestion)
+                self.procedural_remove_edge()
                 failures = 0
 
-            assert new_connectable != self.connectable
-            assert new_connectable is not None
-
+            unreachable = self.connectable - self.reachable_from_root
+            unrootable = self.connectable - self.root_reachable_from
+            report = f'{self.num_loops} {len(self.unconnected)}/' \
+                    f'{len(unreachable)}/{len(unrootable)} {self.goal_reached}'
             try:
-                if goal_reached and not self.graph.goal_reached:
+                if goal_reached and not self.goal_reached:
                     raise DoorRouterException(
                             f'Action would undo victory condition.')
-                if self.graph.goal_reached and (self.graph.goal_nodes & self.graph.rooted) <= self.graph.root_reachable_from:
-                    pass
-                self.graph.verify_all_connectability(new_connectable)
-                self.graph.verify()
-                self.graph.commit()
+                if not self.reachable_from_root & self.unconnected:
+                    raise DoorRouterException(f'Orphaned root cluster.')
+                self.verify()
+                self.commit()
                 failures = 0
-                self.connectable = new_connectable
             except DoorRouterException as error:
-                self.connectable = backup_connectable
-                self.graph.rollback()
-                unreachable = self.graph.procedural_nodes - self.graph.reachable_from_root
-                unrootable = self.graph.procedural_nodes - self.graph.root_reachable_from
-                report = f'{len(self.connectable)}/{len(unreachable)}/{len(unrootable)} {self.graph.goal_reached} {error}'
-                print(report)
+                self.unconnected = backup_unconnected
+                self.rollback()
+                report = f'{report} {error}'
                 if DEBUG:
-                    self.graph.verify()
+                    self.verify()
                 failures += 1
+            log(report)
+        print()
+        try:
+            self.handle_trap_doors()
+        except DoorRouterException as error:
+            raise DoorRouterException(f'Trap door routing failure: {error}')
 
-        if stdout.isatty():
-            import pdb; pdb.set_trace()
-        else:
-            exit(0)
+    def build_graph(self):
+        attempts = 0
+        while True:
+            attempts += 1
+            print(f'Maze generation attempt #{attempts}, seed {self.seed}...')
+            print(f'Connecting {len(self.initial_unconnected)} nodes.')
+            try:
+                self.connect_everything()
+                print(f'Completed maze on attempt #{attempts} '
+                      f'after {self.num_loops} operations.')
+                break
+            except DoorRouterException as error:
+                print()
+                print(f'ERROR: {error}')
+                sleep(1)
+                self.reinitialize()

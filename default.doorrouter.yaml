@@ -1,0 +1,9 @@
+logic_filename:     router_logic.txt
+nodes_filename:     router_nodes.txt
+retry_limit:        3000  # Max loops before reaching goal
+retry_limit_close:  5000  # Max cleanup loops when goal has been reached
+map_size:           1.00  # Percentage of all possible nodes to connect
+map_strictness:     0.95  # Lower bound percentage of selected nodes to connect
+progression_speed:  0.00  # Rate to prioritize key nodes
+trap_doors:         0.00  # Rate to allow one-way doors
+linearity:          0.00  # Rate to avoid connecting nodes of different ranks

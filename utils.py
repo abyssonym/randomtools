@@ -109,6 +109,12 @@ utran = utilrandom
 random = utilrandom
 
 
+def summarize_state():
+    a, b, c = utilrandom.getstate()
+    b = hash(b)
+    return a, b, c
+
+
 def line_wrap(things, width=16):
     newthings = []
     while things:
