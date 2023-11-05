@@ -468,8 +468,10 @@ class Graph(RollbackMixin):
                         raise DoorRouterException(
                             f'Node {self} reachable from wrong direction.')
                 return
-            if self.get_shortest_path(
-                    avoid_nodes=frozenset(self.force_bridge)):
+            bridge_edges = frozenset({e for e in self.reverse_edges
+                                      if e.source in self.force_bridge})
+            assert bridge_edges
+            if self.get_shortest_path(avoid_edges=bridge_edges):
                 raise DoorRouterException(
                     f'Node {self} reachable from wrong direction.')
             return
@@ -557,7 +559,8 @@ class Graph(RollbackMixin):
             key = 'longest path:'
             value = max(n.rank for n in self.nodes if n.rank is not None)
             s += f'  {key:20} {value}\n'
-            if self.goal_reached:
+            if self.goal_reached and (self.reachable_from_root ==
+                                      self.root_reachable_from):
                 if not hasattr(self, 'solutions'):
                     self.generate_solutions()
                 key = 'longest win path:'
@@ -1517,7 +1520,7 @@ class Graph(RollbackMixin):
             except DoorRouterException as error:
                 print()
                 print(f'ERROR: {error}')
-                if DEBUG or True:
+                if DEBUG:
                     print(self.description_problematic)
                 sleep(1)
                 self.reinitialize()
