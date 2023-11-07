@@ -1110,9 +1110,7 @@ class Graph(RollbackMixin):
         return False
 
     def get_avoid_reachable(self, avoid_nodes=None, avoid_edges=None):
-        if not (avoid_nodes or avoid_edges):
-            raise Exception(
-                    'Please use alternate method for standard reachability.')
+        self.reachable_from_root
         assert hasattr(self, '_reachable_from_root')
         if avoid_nodes is None:
             avoid_nodes = frozenset()
