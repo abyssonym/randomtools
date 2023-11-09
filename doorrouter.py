@@ -164,6 +164,14 @@ class Graph(RollbackMixin):
                 pair = list(candidates)[0]
                 return pair
 
+            @property
+            def soft_pairs(self):
+                candidates = {e for e in self.destination.edges if
+                              e.destination is self.source}
+                if not candidates:
+                    return None
+                return candidates
+
             @cached_property
             def combined_conditions(self):
                 return self.true_condition | self.false_condition
@@ -585,8 +593,8 @@ class Graph(RollbackMixin):
                          and e.pair and e.source < e.destination})
             s += f'  {key:20} {value}\n'
             key = 'trap doors:'
-            value = len({e for e in self.all_edges if e.generated
-                         and e.pair is None and e.source is not e.destination})
+            value = len({e for e in self.all_edges if e.generated and
+                         e.source is not e.destination and not e.soft_pairs})
             s += f'  {key:20} {value}\n'
             key = 'generation loops:'
             value = self.num_loops
@@ -1049,7 +1057,6 @@ class Graph(RollbackMixin):
             b.force_bridge.add(a)
         elif '>>' in edgestr:
             a, b = self.split_edgestr(edgestr, '>>')
-            a.add_edges(b, conditions)
             a.required_nodes.add(b)
         elif '=' in edgestr:
             a, b = self.split_edgestr(edgestr, '=')
