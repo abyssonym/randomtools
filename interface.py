@@ -466,6 +466,7 @@ def clean_and_write(objects):
 
 
 def finish_interface():
+    close_file(outfile)
     print()
     print("Randomization completed successfully.")
     print("Output filename: %s" % outfile)
