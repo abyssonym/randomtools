@@ -18,7 +18,7 @@ DEFAULT_CONFIG_FILENAME = path.join(MODULE_FILEPATH, 'default.doorrouter.yaml')
 
 
 def log(line):
-    if DEBUG:
+    if DEBUG or True:
         line = line.strip()
         print(line)
         stdout.flush()
@@ -115,12 +115,18 @@ class Graph(RollbackMixin):
                                 node = graph.get_by_label(l)
                                 self.true_condition.add(node)
                             assert node is not None
+                        self.true_condition = frozenset(self.true_condition)
+                        self.false_condition = frozenset(self.false_condition)
                     else:
                         self.true_condition = frozenset(condition)
                     graph.conditional_nodes |= self.combined_conditions
                     for n in self.combined_conditions:
                         if not n.is_condition:
                             del(n._property_cache['is_condition'])
+                    if self.true_condition:
+                        self.source.parent.conditions.add(self.true_condition)
+                    if self.false_condition:
+                        self.source.parent.conditions.add(self.false_condition)
                 assert self.__hash__() == self.signature.__hash__()
 
                 self.enabled = True
@@ -223,14 +229,23 @@ class Graph(RollbackMixin):
                     return False
                 return True
 
-            def is_full_satisfied_by(self, nodes):
+            def is_full_satisfied_by(self, nodes, strict=True):
+                '''
+                if self.source.full_guaranteed is None:
+                    return self.is_satisfied_by(nodes)
+                for g in self.source.full_guaranteed:
+                    if self.is_satisfied_by(g | nodes | self.source.guaranteed):
+                        return True
+                return False
+                assert False
+                '''
                 if self.is_satisfied_by(nodes):
                     return True
                 if self.source.guaranteed is None:
                     return False
                 edges = {e for e in self.source.edges
                          if e.destination is self.destination}
-                if len(edges) <= 1:
+                if strict and len(edges) <= 1:
                     return False
                 full_guaranteed = set()
                 for g in self.source.full_guaranteed:
@@ -242,10 +257,12 @@ class Graph(RollbackMixin):
                                 g | e.full_true_condition |
                                 self.source.guaranteed | {self.destination})
                             full_guaranteed.add(guaranteed)
-                    if not result:
+                    if strict and not result:
                         return False
                     result = True
-                return full_guaranteed
+                if full_guaranteed:
+                    return full_guaranteed
+                return False
 
             def check_is_real_bridge(self):
                 # accounts for conditions satisfied outside orphaned nodes
@@ -450,10 +467,15 @@ class Graph(RollbackMixin):
                 return self.free_travel_guaranteed
             if hasattr(self, '_equivalent_guaranteed'):
                 return self._equivalent_guaranteed
-            guaranteed = frozenset.union(
-                *[n.guaranteed for n in self.equivalent_nodes])
-            for n in self.equivalent_nodes:
-                n._equivalent_guaranteed = guaranteed
+            if self.guaranteed is None:
+                for n in self.equivalent_nodes:
+                    assert n.guaranteed is None
+                    n._equivalent_guaranteed = None
+            else:
+                guaranteed = frozenset.union(
+                    *[n.guaranteed for n in self.equivalent_nodes])
+                for n in self.equivalent_nodes:
+                    n._equivalent_guaranteed = guaranteed
             return self.equivalent_guaranteed
 
         @property
@@ -502,16 +524,15 @@ class Graph(RollbackMixin):
         def simplify_full_guaranteed(self):
             self.full_guaranteed = {g & self.parent.conditional_nodes
                                     for g in self.full_guaranteed}
-            assert self.full_guaranteed
-            if len(self.full_guaranteed) == 1:
+            if len(self.full_guaranteed) < 3:
                 return
-            sorted_full = sorted(self.full_guaranteed)
-            for i, g1 in enumerate(sorted_full):
-                for g2 in sorted_full[i+1:]:
-                    if g1 < g2 and g2 in self.full_guaranteed:
-                        self.full_guaranteed.remove(g2)
-                    elif g2 < g1 and g1 in self.full_guaranteed:
-                        self.full_guaranteed.remove(g1)
+            smallers, biggers = set(), set()
+            for g1 in self.full_guaranteed:
+                for g2 in self.full_guaranteed:
+                    if g1 < g2:
+                        smallers.add(g1)
+                        biggers.add(g2)
+            self.full_guaranteed = self.full_guaranteed - (smallers & biggers)
 
         def get_orphanable_guaranteed(self):
             # accurate and fastest if guarantees can be guaranteed
@@ -699,18 +720,19 @@ class Graph(RollbackMixin):
                 no_recurse = set(no_recurse)
             if extra_satisfaction is None:
                 extra_satisfaction = set()
+            assert self.guaranteed is not None
 
             def get_satisfaction():
-                if update_guaranteed:
-                    return self.parent.conditional_nodes & (
-                            self.guaranteed | extra_satisfaction)
-                else:
-                    return self.parent.conditional_nodes & (
-                            self.equivalent_guaranteed | extra_satisfaction)
-            if self.guaranteed is not None:
-                reverse_satisfaction = frozenset(
-                        self.parent.conditional_nodes &
-                        (self.guaranteed | extra_satisfaction))
+                return self.parent.conditional_nodes & (
+                        self.guaranteed | extra_satisfaction)
+                #if update_guaranteed or True:
+                #    return self.parent.conditional_nodes & (
+                #            self.guaranteed | extra_satisfaction)
+                #else:
+                #    return self.parent.conditional_nodes & (
+                #            self.equivalent_guaranteed | extra_satisfaction)
+            reverse_satisfaction = frozenset(self.parent.conditional_nodes &
+                                             extra_satisfaction)
             original_satisfaction = frozenset(get_satisfaction())
             satisfaction = set(original_satisfaction)
             # To use "interesting" no_recurse for cache key,
@@ -720,6 +742,7 @@ class Graph(RollbackMixin):
                              (no_recurse | {self}) &
                              self.parent.conditional_nodes))
 
+            #print(self, update_guaranteed, cache_key)
             if self in no_recurse and \
                     cache_key not in self._guaranteed_reachable_cache:
                 raise Exception('Cannot self-recurse!')
@@ -729,6 +752,8 @@ class Graph(RollbackMixin):
             no_recurse.add(self)
 
             reachable_nodes = {self}
+            for n in reachable_nodes:
+                assert n.guaranteed is not None
             reachable_from_nodes = {self}
             if not update_guaranteed:
                 reachable_nodes |= {n for n in self.equivalent_nodes
@@ -746,6 +771,7 @@ class Graph(RollbackMixin):
                           if e.destination in reachable_nodes and
                           not e.combined_conditions}
             done_reverse_edges = set(done_edges)
+            complete_done_edges = set(done_edges)
 
             for key, value in self._guaranteed_reachable_cache.items():
                 ck_satisfaction, ck_no_recurse = key
@@ -761,25 +787,125 @@ class Graph(RollbackMixin):
                                  if e.true_condition}
             guaranteed_tracker = {n: n.guaranteed for n in reachable_nodes}
             def invalidate_guaranteed(n):
-                for e in n.edges & done_edges:
-                    done_edges.remove(e)
-                for e in n.edges & done_reverse_edges:
-                    done_reverse_edges.remove(e)
-                for e in conditional_edges & done_edges:
-                    if n in e.full_true_condition:
-                        done_edges.remove(e)
-                if n in done_reachable_nodes:
-                    done_reachable_nodes.remove(n)
-                if n in done_reachable_from_nodes:
-                    done_reachable_from_nodes.remove(n)
-                if n in reachable_from_nodes:
-                    reachable_from_nodes.remove(n)
+                done_edges.difference_update(n.edges)
+                done_reverse_edges.difference_update(n.edges)
+                #for e in conditional_edges & done_edges:
+                #    if n in e.full_true_condition:
+                #        done_edges.remove(e)
+                done_reachable_nodes.discard(n)
+                done_reachable_from_nodes.discard(n)
+                #if n in reachable_from_nodes - {self}:
+                #    reachable_from_nodes.remove(n)
                 guaranteed_tracker[n] = n.guaranteed
+
+            def propagate_guaranteed(edge, override_fg):
+                #print('PROPAGATE', edge)
+                propagate_edges = {edge} | edge.destination.edges
+                propagated_edges = set()
+                valid_edges = complete_done_edges | {edge}
+                counter = 0
+                propagated = set()
+                while True:
+                    for e in (propagate_edges&valid_edges)-propagated_edges:
+                        #print(' ', e)
+                        dest = e.destination
+                        assert dest.full_guaranteed is not None
+                        assert dest.guaranteed is not None
+                        dest.simplify_full_guaranteed()
+                        for g in dest.full_guaranteed:
+                            assert not g - dest.parent.conditional_nodes
+                        old_guaranteed = (set(dest.full_guaranteed),
+                                          frozenset(dest.guaranteed))
+                        if e is edge:
+                            full_guaranteed = override_fg
+                        else:
+                            full_guaranteed = {frozenset(
+                                #g | e.full_true_condition | {dest}
+                                g | e.true_condition | {dest}
+                                | e.source.guaranteed)
+                                for g in e.source.full_guaranteed}
+                        #if '1b5-001' in str(full_guaranteed):
+                        #    import pdb; pdb.set_trace()
+                        dest.full_guaranteed |= full_guaranteed
+                        temp = set(dest.full_guaranteed)
+                        dest.guaranteed = dest.guaranteed & \
+                                frozenset.intersection(
+                                        *full_guaranteed)
+                        dest.simplify_full_guaranteed()
+                        if old_guaranteed != (dest.full_guaranteed,
+                                              dest.guaranteed):
+                            propagate_edges |= dest.edges
+                            #propagated_edges -= dest.edges
+                            #propagated_edges = set()
+                            propagated.add(dest)
+                    if propagated_edges >= propagate_edges:
+                        break
+                    propagated_edges |= propagate_edges
+
+                    '''
+                    to_propagate = propagate_nodes - propagated_nodes
+                    if not to_propagate:
+                        break
+                    propagated_nodes |= propagate_nodes
+                    for dest in to_propagate:
+                        if dest.full_guaranteed is not None:
+                            assert dest.guaranteed is not None
+                            dest.simplify_full_guaranteed()
+                            old_guaranteed = set(dest.full_guaranteed)
+                            if dest.label == 'b':
+                                print(dest.full_guaranteed)
+                            dest.full_guaranteed |= full_guaranteed
+                            dest.guaranteed = dest.guaranteed & \
+                                    frozenset.intersection(
+                                            *full_guaranteed)
+                        else:
+                            assert dest.guaranteed is None
+                            assert dest is source
+                            old_guaranteed = None
+                            dest.full_guaranteed = full_guaranteed
+                            dest.guaranteed = frozenset.intersection(
+                                    *full_guaranteed)
+
+                        #guaranteed_tracker[dest] = dest.guaranteed
+                        dest.simplify_full_guaranteed()
+                        if dest.full_guaranteed != old_guaranteed:
+                            #import pdb; pdb.set_trace()
+                            #if old_guaranteed is None:
+                            #    invalidate_guaranteed(dest)
+                            #invalidate_guaranteed(dest)
+                            if dest not in reachable_nodes:
+                                invalidate_guaranteed(dest)
+                            #done_edges.difference_update(dest.edges)
+                            #if dest not in reachable_from_nodes:
+                            #    invalidate_guaranteed(dest)
+                            #if dest is self.parent.root:
+                            #    invalidate_guaranteed(dest)
+                            for e in dest.edges & valid_edges:
+                                propagate_nodes.add(e.destination)
+                        if dest.full_guaranteed != old_guaranteed:
+                            changed = True
+                        if dest.label == 'b':
+                            print(dest.full_guaranteed)
+                        print(self, counter, source, dest)
+                        #print(source, dest)
+                    #if source is self.parent.root:
+                    #    invalidate_guaranteed(source)
+                    #    break
+                if changed:
+                    invalidate_guaranteed(source)
+                assert source.full_guaranteed is not None
+                assert source.guaranteed is not None
+                '''
+
+                return propagated
 
             satisfaction |= (reachable_nodes &
                              reachable_from_nodes &
                              self.parent.conditional_nodes)
+            counter = 0
+            complete_done_edges |= set(done_edges)
             while True:
+                counter += 1
                 undone_reachable_nodes = reachable_nodes - done_reachable_nodes
                 undone_reachable_from_nodes = (reachable_from_nodes -
                                                done_reachable_from_nodes)
@@ -796,41 +922,66 @@ class Graph(RollbackMixin):
                 if new_satisfaction:
                     satisfaction |= new_satisfaction
 
+                propagated = False
                 if update_guaranteed:
                     edge_iterator = sorted(edges - done_edges)
                 else:
                     edge_iterator = edges - done_edges
-                for e in edge_iterator:
-                    edge_result = e.is_full_satisfied_by(satisfaction)
+                #for e in edge_iterator:
+                for e in sorted(edge_iterator, key=lambda x: x.source.label, reverse=True):
+                    edge_result = e.is_full_satisfied_by(
+                            satisfaction, strict=len(no_recurse)>1)
+                    #if edge_result and edge_result is not True:
+                    #    print(e, edge_result)
                     if edge_result is not False:
                         dest = e.destination
+                        #print(e)
                         if update_guaranteed:
                             if edge_result is True:
                                 full_guaranteed = {frozenset(
-                                    g | e.full_true_condition | {dest}
+                                    #g | e.full_true_condition | {dest}
+                                    g | e.true_condition | {dest}
                                     | e.source.guaranteed)
                                     for g in e.source.full_guaranteed}
                             else:
                                 full_guaranteed = edge_result
+
+                            if dest.full_guaranteed is None:
+                                assert dest.guaranteed is None
+                                dest.full_guaranteed = full_guaranteed
+                                dest.guaranteed = frozenset.intersection(
+                                        *full_guaranteed)
+                            assert dest.guaranteed is not None
+                            #print(e)
+                            propagated = propagate_guaranteed(e, full_guaranteed) or propagated
+                            '''
                             if dest.full_guaranteed is None:
                                 dest.full_guaranteed = full_guaranteed
                             else:
                                 dest.full_guaranteed |= full_guaranteed
                             if dest.guaranteed is not None:
-                                old_guaranteed = dest.guaranteed
                                 dest.guaranteed = dest.guaranteed & \
                                         frozenset.intersection(
                                                 *full_guaranteed)
-                                if dest.guaranteed != old_guaranteed:
-                                    invalidate_guaranteed(dest)
                             else:
                                 dest.guaranteed = frozenset.intersection(
                                         *full_guaranteed)
                             dest.simplify_full_guaranteed()
+                            if old_guaranteed and dest.full_guaranteed != old_guaranteed:
+                                import pdb; pdb.set_trace()
+                                invalidate_guaranteed(dest)
+                            print(self, counter, dest)
+                            '''
 
+                        if self is self.parent.root:
+                            assert dest.guaranteed is not None
                         reachable_nodes.add(dest)
                         done_edges.add(e)
+                        done_edges = {e2 for e2 in done_edges if dest not in e2.true_condition}
+                        if edge_result is True:
+                            complete_done_edges.add(e)
 
+                #assert complete_done_edges >= done_edges
                 if update_guaranteed:
                     for n in guaranteed_tracker:
                         if n.guaranteed != guaranteed_tracker[n]:
@@ -858,6 +1009,20 @@ class Graph(RollbackMixin):
                             reachable_from_nodes.add(e.source)
                     done_reverse_edges |= edge_iterator
 
+                if propagated:
+                    done_edges = {e for e in done_edges if not e.true_condition}
+                    #for e in complete_done_edges - done_edges:
+                    #    print('REPROP', e)
+                    continue
+
+                #if done_edges < complete_done_edges:
+                #    for e in complete_done_edges - done_edges:
+                #        print('INCOMPLETE', e)
+                #    continue
+
+                for n in reachable_nodes:
+                    assert n.guaranteed is not None
+
                 if reachable_from_nodes <= done_reachable_from_nodes and \
                         reachable_nodes <= done_reachable_nodes:
                     update = False
@@ -866,13 +1031,16 @@ class Graph(RollbackMixin):
                             - reachable_from_nodes)
                             - no_recurse)
                     for n in double_check_nodes:
-                        n_reachable, _ = n.get_guaranteed_reachable(
+                        if len(no_recurse) > 1:
+                            break
+                        assert n.guaranteed is not None
+                        rfn, nrf = n.get_guaranteed_reachable(
                                 no_recurse=no_recurse,
                                 extra_satisfaction=reverse_satisfaction,
                                 update_guaranteed=update_guaranteed)
-                        if n_reachable & reachable_from_nodes:
+                        if rfn & reachable_from_nodes:
                             reachable_from_nodes.add(n)
-                        reachable_nodes |= n_reachable
+                        reachable_nodes |= rfn
                 else:
                     continue
 
@@ -880,6 +1048,8 @@ class Graph(RollbackMixin):
                         reachable_nodes <= done_reachable_nodes:
                     break
 
+            #if update_guaranteed and self is self.parent.root:
+            #    assert self.by_label('z') in reachable_nodes
             result = (frozenset(reachable_nodes),
                       frozenset(reachable_from_nodes))
             if update_guaranteed:
@@ -1137,8 +1307,10 @@ class Graph(RollbackMixin):
         self.preset_connections = preset_connections
         if 'seed' in self.config:
             self.seed = self.config['seed']
-        elif self.testing or self.parent:
-            self.seed = -1
+        elif self.parent:
+            self.seed = (-abs(self.parent.seed)) - 1
+        elif self.testing:
+            self.seed = 0
         else:
             self.seed = random.randint(0, 9999999999)
 
@@ -1220,6 +1392,7 @@ class Graph(RollbackMixin):
         self.connectable = set()
         self.conditional_nodes = set()
         self.guarantee_nodes = set()
+        self.conditions = set()
         self.problematic_nodes = defaultdict(int)
         self.num_loops = -1
         self.definitions = {}
@@ -1438,6 +1611,7 @@ class Graph(RollbackMixin):
 
         self.rerank_and_reguarantee()
 
+        unranked = [n for n in rfr if n.rank is None]
         ranks = sorted(n.rank for n in rfr)
         nodes_by_rank_or_less = set()
         self.nodes_by_rank, self.nodes_by_rank_or_less = {}, {}
@@ -1677,6 +1851,7 @@ class Graph(RollbackMixin):
         rank = 0
         while True:
             for n in nodes - done_nodes:
+                assert n.guaranteed is not None
                 n.rank = rank
                 edges |= n.edges
             rank += 1
@@ -1690,6 +1865,7 @@ class Graph(RollbackMixin):
                     success = True
                     if new_guaranteed != e.destination.guaranteed:
                         for n in e.true_condition:
+                            assert n.guaranteed is not None
                             rfn, nrf = n.get_reduced_guaranteed_reachable()
                             if e.destination not in rfn:
                                 success = False
@@ -1699,6 +1875,14 @@ class Graph(RollbackMixin):
                         e.destination.guaranteed = new_guaranteed
             if not nodes - done_nodes:
                 break
+
+        for n in sorted(self.reachable_from_root):
+            if n.rank is None:
+                print(n)
+                for e in sorted(n.reverse_edges):
+                    print(' ', e)
+                    print(e.source.rank, e.true_condition <= done_nodes)
+                print()
 
     def get_equivalence_groups(self):
         if hasattr(self, '_reachable_from_root'):
@@ -1734,7 +1918,6 @@ class Graph(RollbackMixin):
         egs = self.get_equivalence_groups()
         eg_nodes = {n for eg in egs for n in eg}
         g = Graph(parent=self)
-        g.seed = abs(self.seed + 1) * -1
         g.node_mapping = {}
         leader_dict = {}
         sort_key = lambda n: (n.rank if n.rank is not None else -1, n)
@@ -1822,6 +2005,8 @@ class Graph(RollbackMixin):
             if len(n.edges) >= 3 or len(n.reverse_edges) >= 3:
                 continue
             if len(n.edges) != len(n.reverse_edges):
+                continue
+            if not (n.edges or n.reverse_edges):
                 continue
             if len(n.edges) == 1:
                 if list(n.edges)[0].destination is \
