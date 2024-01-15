@@ -1,6 +1,6 @@
 # Run this file as a module from the parent directory, i.e.:
 #       python -m randomtools.test_doorrouter
-from .doorrouter import Graph
+from .doorrouter import Graph, DoorRouterException
 from string import ascii_lowercase, ascii_uppercase
 from sys import exc_info
 import random
@@ -633,6 +633,12 @@ def test_multiple_uncertain_conditions5():
     g.add_edge('c', 'd', condition='x', directed=True)
     g.rooted
 
+    assert frozenset({}) not in g.by_label('d').full_guaranteed
+    assert frozenset({g.by_label(l) for l in ('a', 'x')}) in \
+            g.by_label('d').full_guaranteed
+    assert frozenset({g.by_label('x')}) in \
+            g.by_label('d').full_guaranteed
+
     assert g.reduce is True
     rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
     rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
@@ -818,6 +824,7 @@ def test_backtracking():
     g.add_edge('d', 'f', condition='e', directed=False)
     g.rooted
     assert g.reduce is True
+    g.reduce = False
     rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
     assert g.by_label('f') in rfr
     assert g.by_label('f') in rrf
@@ -1348,6 +1355,125 @@ def test_graph_reduction_guaranteed1():
     assert edges1 == edges2
     assert guaranteed1 == guaranteed2
 
+def test_orphanable1():
+    g = get_graph()
+    g.add_edge('root', 'x')
+    edges = g.add_edge('x', 'y')
+    g.clear_rooted_cache()
+    g.rooted
+    assert len(edges) == 1
+    edge = edges.pop()
+    assert edge.get_guaranteed_orphanable() == {g.by_label('y')}
+
+def test_orphanable2():
+    g = get_graph()
+    g.add_edge('root', 'x')
+    edges = g.add_edge('x', 'y')
+    g.add_edge('x', 'a')
+    g.add_edge('a', 'b')
+    g.add_edge('b', 'c')
+    g.add_edge('c', 'd')
+    g.add_edge('d', 'y')
+    g.clear_rooted_cache()
+    g.rooted
+    assert len(edges) == 1
+    edge = edges.pop()
+    assert edge.get_guaranteed_orphanable() == set()
+
+def test_orphanable3():
+    g = get_graph()
+    g.add_edge('root', 'x', directed=False)
+    g.add_multiedge('x=>y')
+    g.add_edge('y', 'x')
+    g.add_edge('x', 'a', directed=False)
+    g.add_edge('a', 'b', directed=False)
+    g.add_edge('b', 'c', directed=False)
+    g.add_edge('c', 'd', directed=False)
+    g.add_edge('y', 'z', directed=False)
+    g.add_edge('d', 'y', condition='z', directed=False)
+    g.reduce = False
+    g.clear_rooted_cache()
+    g.rooted
+    g.verify()
+
+def test_orphanable4():
+    g = get_graph()
+    g.add_edge('root', 'x')
+    g.add_multiedge('x=>y')
+    g.add_edge('x', 'a')
+    g.add_edge('a', 'b')
+    g.add_edge('b', 'c')
+    g.add_edge('c', 'd')
+    g.add_edge('d', 'y')
+    g.clear_rooted_cache()
+    g.rooted
+    try:
+        g.verify()
+        assert False
+    except DoorRouterException:
+        pass
+
+def test_orphanable5():
+    g = get_graph()
+    g.add_edge('root', 'x', directed=False)
+    g.add_multiedge('x=>y')
+    g.add_edge('x', 'a')
+    g.add_edge('a', 'y')
+    try:
+        g.verify()
+        assert False
+    except DoorRouterException:
+        pass
+
+def test_orphanable6():
+    g = get_graph()
+    g.add_edge('root', 'x', directed=False)
+    g.add_multiedge('x=>y')
+    g.add_edge('x', 'a')
+    g.add_edge('a', 'y')
+    g.add_edge('y', 'x')
+    try:
+        g.verify()
+        assert False
+    except DoorRouterException:
+        pass
+
+def test_orphanable_backtracking1():
+    g = get_graph()
+    g.add_edge('root', 'y')
+    g.add_edge('y', 'x', directed=False)
+    g.add_edge('y', 'a', condition='x')
+    g.rooted
+    assert len(g.by_label('x').reverse_edges) == 1
+    e = list(g.by_label('x').reverse_edges)[0]
+    assert g.by_label('x') in g.by_label('a').guaranteed
+    g.get_guaranteed_edges()
+    assert e in g.by_label('x').guaranteed_edges
+    assert e in g.by_label('a').guaranteed_edges
+    assert g.by_label('a') in e.get_guaranteed_orphanable()
+    assert e.pair in g.by_label('a').guaranteed_edges
+    assert g.by_label('a') in e.pair.get_guaranteed_orphanable()
+
+def test_orphanable_backtracking2():
+    g = get_graph()
+    g.add_edge('root', 'a', directed=False)
+    g.add_edge('a', 'z', condition='q', directed=False)
+    g.add_edge('a', 'q')
+    g.add_edge('q', 'x')
+    g.add_edge('x', 'a', condition='y')
+    g.add_edge('x', 'y', directed=False)
+    g.reduce = False
+    g.rooted
+    assert frozenset({g.by_label(n) for n in {'q', 'y'}}) \
+            in g.by_label('a').full_guaranteed
+    assert frozenset({g.by_label(n) for n in {'q', 'y'}}) \
+            in g.by_label('z').full_guaranteed
+    assert frozenset({g.by_label(n) for n in {'q'}}) \
+            not in g.by_label('z').full_guaranteed
+    assert g.reachable_from_root == g.root_reachable_from
+    assert g.by_label('z') in g.reachable_from_root
+    assert g.by_label('y') in g.by_label('z').guaranteed
+
 def test_custom():
     g = load_test_data('test_edge_data.txt')
     g.reduce = True
@@ -1379,14 +1505,26 @@ def test_custom_graph_reduction():
             f.write(guaranteed2)
     assert guaranteed1 == guaranteed2
 
-def test_temp():
+def test_custom_orphanable():
     g = load_test_data('test_edge_data.txt')
     g.reduce = True
+    g.reduce = False
     g.clear_rooted_cache()
     g.rooted
+    edges = sorted(g.all_edges)
+    for e in edges:
+        if 'x->y' in str(e):
+            orphans1 = e.get_guaranteed_orphanable()
+            orphans2 = e.get_guaranteed_orphanable_reroot()
+            assert orphans1 == orphans2
 
 
 if __name__ == '__main__':
+    #test_multiple_uncertain_conditions5()
+    #test_distant_uncertain_condition7()
+    #test_orphanable_backtracking1()
+    #test_orphanable_backtracking2()
+    #exit(0)
     total = 0
     failed_tests = []
     for fname, f in sorted(globals().items()):
