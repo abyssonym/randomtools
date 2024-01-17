@@ -818,14 +818,19 @@ def test_backtracking():
     g = get_graph()
     g.add_edge('root', 'a', directed=False)
     g.add_edge('root', 'b', directed=False)
+    assert len(g.root.edges) == 2
     g.add_edge('a', 'c', directed=False)
     g.add_edge('b', 'd', condition='c', directed=False)
     g.add_edge('c', 'e', condition='d', directed=False)
     g.add_edge('d', 'f', condition='e', directed=False)
+    assert len(g.root.edges) == 2
     g.rooted
     assert g.reduce is True
     g.reduce = False
+    assert len(g.root.edges) == 2
     rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
+    assert g.by_label('a') in rfr
+    assert g.by_label('b') in rfr
     assert g.by_label('f') in rfr
     assert g.by_label('f') in rrf
     assert len(rfr) == len({'root', 'a', 'b', 'c', 'd', 'e', 'f'})
@@ -1447,7 +1452,6 @@ def test_orphanable_backtracking1():
     assert len(g.by_label('x').reverse_edges) == 1
     e = list(g.by_label('x').reverse_edges)[0]
     assert g.by_label('x') in g.by_label('a').guaranteed
-    g.get_guaranteed_edges()
     assert e in g.by_label('x').guaranteed_edges
     assert e in g.by_label('a').guaranteed_edges
     assert g.by_label('a') in e.get_guaranteed_orphanable()
@@ -1520,11 +1524,6 @@ def test_custom_orphanable():
 
 
 if __name__ == '__main__':
-    #test_multiple_uncertain_conditions5()
-    #test_distant_uncertain_condition7()
-    #test_orphanable_backtracking1()
-    #test_orphanable_backtracking2()
-    #exit(0)
     total = 0
     failed_tests = []
     for fname, f in sorted(globals().items()):
