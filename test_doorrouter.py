@@ -86,6 +86,9 @@ def pretty_guarantees(g):
             s += f'  {guaranteed}\n'
     return s.strip()
 
+def pretty_nodeset(ns):
+    return ','.join(sorted(str(n) for n in ns))
+
 def test_test():
     g = get_graph()
     g.add_edge('root', 'a', directed=False)
@@ -171,9 +174,9 @@ def test_uncertain_condition1():
     assert g.by_label('c') in g.reachable_from_root
     assert g.by_label('b') in g.get_no_return_nodes(allow_nodes=g.nodes)
     assert g.reduce is True
-    rfb, brf = g.by_label('b').get_guaranteed_reachable(and_from=True)
+    rfb, brf, _ = g.by_label('b').get_guaranteed_reachable(and_from=True)
     assert g.by_label('c') not in rfb
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
     assert g.by_label('a') in g.by_label('c').guaranteed
     assert g.by_label('b') in rfc
     assert g.by_label('b') not in crf
@@ -189,8 +192,8 @@ def test_uncertain_condition2():
     g.rooted
 
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') not in rfc
     assert g.by_label('d') in crf
     assert g.by_label('c') in rfd
@@ -207,8 +210,8 @@ def test_uncertain_condition3():
     g.rooted
 
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') not in rfc
     assert g.by_label('d') not in crf
     assert g.by_label('c') not in rfd
@@ -229,8 +232,8 @@ def test_multiple_conditions1():
     assert g.by_label('c') in g.reachable_from_root
     assert g.by_label('d') in g.reachable_from_root
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') in rfc
     assert g.by_label('d') in crf
     assert g.by_label('c') in rfd
@@ -253,8 +256,8 @@ def test_multiple_conditions2():
     assert g.by_label('d').full_guaranteed == g.by_label('c').full_guaranteed
 
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') in rfc
     assert g.by_label('d') not in crf
     assert g.by_label('root') in crf
@@ -278,8 +281,8 @@ def test_multiple_conditions3():
     assert g.by_label('d').full_guaranteed < g.by_label('c').full_guaranteed
 
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') not in rfc
     assert g.by_label('d') in crf
     assert g.by_label('c') in rfd
@@ -301,8 +304,8 @@ def test_multiple_conditions4():
     assert g.by_label('d').full_guaranteed == g.by_label('c').full_guaranteed
 
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') in rfc
     assert g.by_label('d') in crf
     assert g.by_label('c') in rfd
@@ -323,8 +326,8 @@ def test_multiple_conditions5():
     assert g.by_label('d').full_guaranteed == g.by_label('c').full_guaranteed
 
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') in rfc
     assert g.by_label('d') in crf
     assert g.by_label('c') in rfd
@@ -345,8 +348,8 @@ def test_multiple_conditions6():
     assert g.by_label('d').full_guaranteed == g.by_label('c').full_guaranteed
 
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') in rfc
     assert g.by_label('d') in crf
     assert g.by_label('c') in rfd
@@ -367,8 +370,8 @@ def test_multiple_conditions7():
     assert g.by_label('z').full_guaranteed == g.by_label('y').full_guaranteed
 
     assert g.reduce is True
-    rfy, yrf = g.by_label('y').get_guaranteed_reachable(and_from=True)
-    rfz, zrf = g.by_label('z').get_guaranteed_reachable(and_from=True)
+    rfy, yrf, _ = g.by_label('y').get_guaranteed_reachable(and_from=True)
+    rfz, zrf, _ = g.by_label('z').get_guaranteed_reachable(and_from=True)
     assert g.by_label('z') in rfy
     assert g.by_label('z') in yrf
     assert g.by_label('y') in rfz
@@ -551,8 +554,8 @@ def test_multiple_uncertain_conditions1():
     g.rooted
 
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') in rfc
     assert g.by_label('d') in crf
     assert g.by_label('c') in rfd
@@ -572,8 +575,8 @@ def test_multiple_uncertain_conditions2():
     g.rooted
 
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') in rfc
     assert g.by_label('d') in crf
     assert g.by_label('c') in rfd
@@ -593,8 +596,8 @@ def test_multiple_uncertain_conditions3():
     g.rooted
 
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') in rfc
     assert g.by_label('d') in crf
     assert g.by_label('c') in rfd
@@ -613,8 +616,8 @@ def test_multiple_uncertain_conditions4():
     g.rooted
 
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') not in rfc
     assert g.by_label('d') in crf
     assert g.by_label('c') in rfd
@@ -640,8 +643,8 @@ def test_multiple_uncertain_conditions5():
             g.by_label('d').full_guaranteed
 
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') not in rfc
     assert g.by_label('d') not in crf
     assert g.by_label('c') not in rfd
@@ -661,8 +664,8 @@ def test_multiple_uncertain_conditions6():
     g.rooted
 
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
-    rfd, drf = g.by_label('d').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfd, drf, _ = g.by_label('d').get_guaranteed_reachable(and_from=True)
     assert g.by_label('d') in rfc
     assert g.by_label('d') not in crf
     assert g.by_label('c') not in rfd
@@ -680,7 +683,7 @@ def test_distant_condition():
     g.rooted
 
     assert g.reduce is True
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert g.by_label('x') in rfr
     assert g.by_label('x') in rrf
 
@@ -697,7 +700,7 @@ def test_distant_uncertain_condition1():
     g.rooted
 
     assert g.reduce is True
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert g.by_label('x') in rfr
     assert g.by_label('x') in rrf
 
@@ -714,7 +717,7 @@ def test_distant_uncertain_condition2():
     g.rooted
 
     assert g.reduce is True
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert g.by_label('x') in rfr
     assert g.by_label('x') in rrf
 
@@ -731,7 +734,7 @@ def test_distant_uncertain_condition3():
     g.rooted
 
     assert g.reduce is True
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert g.by_label('x') in rfr
     assert g.by_label('x') in rrf
     assert g.by_label('c') in rfr
@@ -750,7 +753,7 @@ def test_distant_uncertain_condition4():
     g.rooted
 
     assert g.reduce is True
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert g.by_label('x') in rfr
     assert g.by_label('x') in rrf
     assert g.by_label('c') in rfr
@@ -769,7 +772,7 @@ def test_distant_uncertain_condition5():
     g.rooted
 
     assert g.reduce is True
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert g.by_label('x') in rfr
     assert g.by_label('x') not in rrf
     assert g.by_label('c') in rfr
@@ -788,7 +791,7 @@ def test_distant_uncertain_condition6():
     g.rooted
 
     assert g.reduce is True
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert g.by_label('x') in rfr
     assert g.by_label('x') in rrf
     assert g.by_label('c') in rfr
@@ -808,7 +811,7 @@ def test_distant_uncertain_condition7():
     g.rooted
 
     assert g.reduce is True
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert g.by_label('x') in rfr
     assert g.by_label('x') in rrf
     assert g.by_label('c') in rfr
@@ -828,7 +831,7 @@ def test_backtracking():
     assert g.reduce is True
     g.reduce = False
     assert len(g.root.edges) == 2
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert g.by_label('a') in rfr
     assert g.by_label('b') in rfr
     assert g.by_label('f') in rfr
@@ -840,7 +843,7 @@ def test_random_equivalent_nodes():
     g = get_random_graph()
     g.rooted
     assert g.reduce is True
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     nodes = sorted(rfr)
     set_lengths = set()
     for n1 in nodes:
@@ -875,7 +878,7 @@ def test_circular_dependency():
     g.add_edge('c', 'z', condition='a', directed=False)
     g.rooted
     assert g.reduce is True
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert len(rfr) == 7
     assert len(rrf) == 1
 
@@ -913,8 +916,8 @@ def test_loop1():
     g.clear_rooted_cache()
     g.rooted
     assert g.reduce is False
-    rfn, nrf = g.root.get_guaranteed_reachable(and_from=True)
-    assert not hasattr(g, 'reduced_graph')
+    rfn, nrf, _ = g.root.get_guaranteed_reachable(and_from=True)
+    assert g.reduced_graph is None
     assert g.by_label('y') in rfn
 
 def test_graph_reduction01():
@@ -923,9 +926,9 @@ def test_graph_reduction01():
     g.add_edge('root', 'c', directed=True)
     g.add_edge('c', 'root', condition='b', directed=True)
     g.rooted
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True, do_reduce=False)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True, do_reduce=False)
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
     assert g.root not in rfc
     assert g.root in crf
     assert g.by_label('c') in rfr
@@ -942,8 +945,8 @@ def test_graph_reduction02():
     g.reduced_graph = g.get_reduced_graph()
     g.rooted
     assert g.reduce is True
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True)
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
     assert g.root not in rfc
     assert g.root in crf
     assert g.by_label('c') in rfr
@@ -994,13 +997,13 @@ def test_graph_reduction05():
     g.clear_rooted_cache()
     g.reduced_graph = g.get_reduced_graph()
     g.rooted
-    rfn, nrf = g.root.get_guaranteed_reachable(and_from=True, do_reduce=False)
+    rfn, nrf, _ = g.root.get_guaranteed_reachable(and_from=True, do_reduce=False)
     assert g.reduce is True
-    rfx, xrf = g.root.get_guaranteed_reachable(and_from=True)
-    rfn2, n2rf = g.by_label('a').get_guaranteed_reachable(
+    rfx, xrf, _ = g.root.get_guaranteed_reachable(and_from=True)
+    rfn2, n2rf, _ = g.by_label('a').get_guaranteed_reachable(
             and_from=True, do_reduce=False)
     assert g.reduce is True
-    rfx2, x2rf = g.by_label('a').get_guaranteed_reachable(and_from=True)
+    rfx2, x2rf, _ = g.by_label('a').get_guaranteed_reachable(and_from=True)
     assert rfn == rfx
     assert nrf == xrf
     assert rfn2 == rfx2
@@ -1042,13 +1045,13 @@ def test_graph_reduction06():
     g.clear_rooted_cache()
     g.reduced_graph = g.get_reduced_graph()
     g.rooted
-    rfn, nrf = g.root.get_guaranteed_reachable(and_from=True, do_reduce=False)
+    rfn, nrf, _ = g.root.get_guaranteed_reachable(and_from=True, do_reduce=False)
     assert g.reduce is True
-    rfx, xrf = g.root.get_guaranteed_reachable(and_from=True)
-    rfn2, n2rf = g.by_label('b').get_guaranteed_reachable(
+    rfx, xrf, _ = g.root.get_guaranteed_reachable(and_from=True)
+    rfn2, n2rf, _ = g.by_label('b').get_guaranteed_reachable(
             and_from=True, do_reduce=False)
     assert g.reduce is True
-    rfx2, x2rf = g.by_label('b').get_guaranteed_reachable(and_from=True)
+    rfx2, x2rf, _ = g.by_label('b').get_guaranteed_reachable(and_from=True)
     assert rfn == rfx
     assert nrf == xrf
     assert rfn2 == rfx2
@@ -1063,15 +1066,14 @@ def test_graph_reduction07():
 
     g.clear_rooted_cache()
     g.rooted
-    rfn, nrf = g.root.get_guaranteed_reachable(and_from=True, do_reduce=False)
+    rfn, nrf, _ = g.root.get_guaranteed_reachable(and_from=True, do_reduce=False)
     assert g.reduce is True
-    rfx, xrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfx, xrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert rfn == rfx
     assert nrf == xrf
 
 def test_graph_reduction08():
     g = get_graph()
-    assert not hasattr(g, 'reduced_graph')
     g.reduce = False
     g.by_label('c').add_guarantee(g.by_label('b'))
     g.add_edge('root', 'a', directed=False)
@@ -1079,12 +1081,11 @@ def test_graph_reduction08():
     g.add_edge('a', 'c', directed=False)
     g.clear_rooted_cache()
     g.rooted
-    assert not hasattr(g, 'reduced_graph')
+    assert g.reduced_graph is None
     assert g.by_label('b') not in g.by_label('c').guaranteed
 
 def test_graph_reduction09():
     g = get_graph()
-    assert not hasattr(g, 'reduced_graph')
     g.reduce = True
     g.by_label('c').add_guarantee(g.by_label('b'))
     g.add_edge('root', 'a', directed=False)
@@ -1092,7 +1093,7 @@ def test_graph_reduction09():
     g.add_edge('a', 'c', directed=False)
     g.clear_rooted_cache()
     g.rooted
-    assert hasattr(g, 'reduced_graph')
+    assert g.reduced_graph
     assert g.by_label('b') not in g.by_label('c').guaranteed
 
 def test_graph_reduction10():
@@ -1104,7 +1105,7 @@ def test_graph_reduction10():
     g.add_edge('b', 'c', directed=False)
     g.add_edge('b', 'd', directed=False)
     g.rooted
-    assert hasattr(g, 'reduced_graph')
+    assert g.reduced_graph
     assert g.by_label('a') in g.by_label('d').guaranteed
     assert g.by_label('b') in g.by_label('d').guaranteed
     assert g.by_label('c') not in g.by_label('d').guaranteed
@@ -1121,14 +1122,14 @@ def test_graph_reduction11():
     g.clear_rooted_cache()
     g.rooted
     assert g.reduce is False
-    rfn, nrf = g.root.get_guaranteed_reachable(and_from=True)
-    assert not hasattr(g, 'reduced_graph')
+    rfn, nrf, _ = g.root.get_guaranteed_reachable(and_from=True)
+    assert g.reduced_graph is None
     g.reduce = True
     g.clear_rooted_cache()
     g.rooted
-    assert hasattr(g, 'reduced_graph')
+    assert g.reduced_graph
     assert g.reduce is True
-    rfx, xrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfx, xrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert g.by_label('y') in rfn
     assert g.by_label('y') in rfx
     assert rfn == rfx
@@ -1139,9 +1140,9 @@ def test_graph_reduction12():
     g.add_edge('root', 'b', directed=False)
     g.add_edge('c', 'root', condition='b', directed=False)
     g.rooted
-    rfr, rrf = g.root.get_guaranteed_reachable(and_from=True, do_reduce=False)
+    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True, do_reduce=False)
     assert g.reduce is True
-    rfc, crf = g.by_label('c').get_guaranteed_reachable(and_from=True)
+    rfc, crf, _ = g.by_label('c').get_guaranteed_reachable(and_from=True)
     assert g.root in rfc
     assert g.root in crf
     assert g.by_label('c') in rfr
@@ -1165,15 +1166,15 @@ def test_graph_reduction13():
     g.clear_rooted_cache()
     g.rooted
     assert g.reduce is False
-    rfn, nrf = g.root.get_guaranteed_reachable(and_from=True)
-    assert not hasattr(g, 'reduced_graph')
+    rfn, nrf, _ = g.root.get_guaranteed_reachable(and_from=True)
+    assert g.reduced_graph is None
     assert g.by_label('z') in rfn
     g.reduce = True
     g.clear_rooted_cache()
     g.rooted
-    assert hasattr(g, 'reduced_graph')
+    assert g.reduced_graph
     assert g.reduce is True
-    rfx, xrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfx, xrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert g.by_label('z') in rfx
     assert rfn == rfx
     assert nrf == xrf
@@ -1282,17 +1283,17 @@ def test_graph_reduction_guarantees1():
     g.clear_rooted_cache()
     g.rooted
     assert g.reduce is False
-    rfn, nrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfn, nrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert g.by_label('p') in g.by_label('s').guaranteed
     guarantees = {n: n.guaranteed for n in rfn}
-    assert not hasattr(g, 'reduced_graph')
+    assert g.reduced_graph is None
     g.reduce = True
     g.clear_rooted_cache()
     g.clear_node_guarantees()
     g.rooted
-    assert hasattr(g, 'reduced_graph')
+    assert g.reduced_graph
     assert g.reduce is True
-    rfx, xrf = g.root.get_guaranteed_reachable(and_from=True)
+    rfx, xrf, _ = g.root.get_guaranteed_reachable(and_from=True)
     assert g.reduced_graph.node_mapping[g.by_label('p')] in \
             g.reduced_graph.node_mapping[g.by_label('s')].guaranteed
     assert g.by_label('p') in g.by_label('s').guaranteed
@@ -1478,12 +1479,145 @@ def test_orphanable_backtracking2():
     assert g.by_label('z') in g.reachable_from_root
     assert g.by_label('y') in g.by_label('z').guaranteed
 
+def test_orphanable_reduction1():
+    g1 = get_graph()
+    g1.add_edge('root', 'y')
+    g1.add_edge('y', 'z', condition='x')
+    g1.add_edge('x', 'y', directed=False)
+    g1.reduce = True
+    g1.clear_rooted_cache()
+    g1.rooted
+    e1 = [e for e in g1.all_edges if 'x->y' in str(e)]
+    assert len(e1) == 1
+    e1 = e1[0]
+
+    g2 = get_graph()
+    g2.add_edge('root', 'y')
+    g2.add_edge('y', 'z', condition='x')
+    g2.add_edge('x', 'y', directed=False)
+    g2.reduce = False
+    g2.clear_rooted_cache()
+    g2.rooted
+    e2 = [e for e in g2.all_edges if 'x->y' in str(e)]
+    assert len(e2) == 1
+    e2 = e2[0]
+
+    orphans1 = e1.get_guaranteed_orphanable()
+    orphans2 = e2.get_guaranteed_orphanable()
+    assert g1.by_label('z') in orphans1
+    assert g2.by_label('z') in orphans2
+    assert len(orphans1) == len(orphans2)
+    assert pretty_nodeset(orphans1) == pretty_nodeset(orphans2)
+
+def test_orphanable_reduction2():
+    g1 = get_graph()
+    g1.add_edge('root', 'y')
+    g1.add_edge('y', 'w', condition='z')
+    g1.add_edge('x', 'y', directed=False)
+    g1.add_edge('x', 'z', directed=False)
+    g1.reduce = True
+    g1.clear_rooted_cache()
+    g1.rooted
+    e1 = [e for e in g1.all_edges if 'x->y' in str(e)]
+    assert len(e1) == 1
+    e1 = e1[0]
+
+    g2 = get_graph()
+    g2.add_edge('root', 'y')
+    g2.add_edge('y', 'w', condition='z')
+    g2.add_edge('x', 'y', directed=False)
+    g2.add_edge('x', 'z', directed=False)
+    g2.reduce = False
+    g2.clear_rooted_cache()
+    g2.rooted
+    e2 = [e for e in g2.all_edges if 'x->y' in str(e)]
+    assert len(e2) == 1
+    e2 = e2[0]
+
+    orphans1 = e1.get_guaranteed_orphanable()
+    orphans2 = e2.get_guaranteed_orphanable()
+    assert g2.by_label('w') in orphans2
+    assert g1.by_label('w') in orphans1
+    assert len(orphans1) == len(orphans2)
+    assert pretty_nodeset(orphans1) == pretty_nodeset(orphans2)
+
+def test_orphanable_reduction3():
+    g1 = get_graph()
+    g1.add_edge('root', 'a')
+    g1.add_edge('a', 'b')
+    g1.add_edge('b', 'c')
+    g1.add_edge('b', 'w', condition='z')
+    g1.add_edge('c', 'd')
+    g1.add_edge('d', 'a')
+    g1.add_edge('d', 'e')
+    g1.add_edge('e', 'c')
+    g1.add_edge('e', 'y', directed=False)
+    g1.add_edge('x', 'y', directed=False)
+    g1.add_edge('x', 'z', directed=False)
+    g1.reduce = True
+    g1.clear_rooted_cache()
+    g1.rooted
+    e1 = [e for e in g1.all_edges if 'x->y' in str(e)]
+    assert len(e1) == 1
+    e1 = e1[0]
+
+    g2 = get_graph()
+    g2.add_edge('root', 'a')
+    g2.add_edge('a', 'b')
+    g2.add_edge('b', 'c')
+    g2.add_edge('b', 'w', condition='z')
+    g2.add_edge('c', 'd')
+    g2.add_edge('d', 'a')
+    g2.add_edge('d', 'e')
+    g2.add_edge('e', 'c')
+    g2.add_edge('e', 'y', directed=False)
+    g2.add_edge('x', 'y', directed=False)
+    g2.add_edge('x', 'z', directed=False)
+    g2.reduce = False
+    g2.clear_rooted_cache()
+    g2.rooted
+    e2 = [e for e in g2.all_edges if 'x->y' in str(e)]
+    assert len(e2) == 1
+    e2 = e2[0]
+
+    orphans1 = e1.get_guaranteed_orphanable()
+    orphans2 = e2.get_guaranteed_orphanable()
+    assert pretty_nodeset(orphans1) == pretty_nodeset(orphans2)
+
+def test_orphanable_reduction4():
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('a', 'y')
+    g.add_edge('y', 'b', condition='a', directed=False)
+    g.add_edge('y', 'x', directed=False)
+    g.add_edge('y', 'z', condition='b')
+    g.reduce = True
+    g.clear_rooted_cache()
+    g.rooted
+    e1 = [e for e in g.all_edges if 'x->y' in str(e)]
+    assert len(e1) == 1
+    e1 = e1[0]
+    assert g.by_label('z') not in e1.get_guaranteed_orphanable()
+
+def test_rerank1():
+    g = get_graph()
+    g.add_edge('root', 'x', directed=False)
+    g.add_edge('root', 'a', condition='x')
+    g.add_edge('a', 'b', directed=False)
+    g.add_edge('b', 'c', directed=False)
+    g.reduce=True
+    g.clear_rooted_cache()
+    g.rooted
+    assert g.reduced_graph is not None
+    assert g.by_label('c') in g.reachable_from_root
+    assert 'a->b' in str(g._edge_reachable_from_root)
+    assert g.by_label('c') not in g.by_label('b').guaranteed
+
 def test_custom():
     g = load_test_data('test_edge_data.txt')
     g.reduce = True
     g.clear_rooted_cache()
     g.rooted
-    return
 
 def test_custom_graph_reduction():
     g1 = load_test_data('test_edge_data.txt')
@@ -1519,8 +1653,32 @@ def test_custom_orphanable():
     for e in edges:
         if 'x->y' in str(e):
             orphans1 = e.get_guaranteed_orphanable()
-            orphans2 = e.get_guaranteed_orphanable_reroot()
+            orphans2, _ = e.get_bridge_double_orphanable()
             assert orphans1 == orphans2
+
+def test_custom_orphanable_reduction():
+    try:
+        g1 = load_test_data('test_edge_data.txt')
+        g1.reduce = True
+        g1.clear_rooted_cache()
+        g1.rooted
+        e1 = [e for e in g1.all_edges if 'x->y' in str(e)]
+        assert len(e1) == 1
+        e1 = e1[0]
+
+        g2 = load_test_data('test_edge_data.txt')
+        g2.reduce = False
+        g2.clear_rooted_cache()
+        g2.rooted
+        e2 = [e for e in g2.all_edges if 'x->y' in str(e)]
+        assert len(e2) == 1
+        e2 = e2[0]
+
+        orphans1 = e1.get_guaranteed_orphanable()
+        orphans2 = e2.get_guaranteed_orphanable()
+    except AssertionError:
+        return
+    assert pretty_nodeset(orphans1) == pretty_nodeset(orphans2)
 
 
 if __name__ == '__main__':
