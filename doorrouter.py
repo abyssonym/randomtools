@@ -1051,15 +1051,14 @@ class Graph(RollbackMixin):
                 return
             if not self.rooted:
                 return
-            for e in self.reverse_edges:
-                if e.true_condition and \
-                        self in self.parent.expand_guarantee(e.true_condition):
-                    continue
-                if e.source.rooted and e.source not in self.force_bridge:
-                    if self not in e.source.guaranteed:
-                        raise DoorRouterException(
-                            f'Node {self} reachable from wrong direction.')
-            return
+            assert len(self.force_bridge) == 1
+            force_edges = {e for e in self.reverse_edges
+                           if e.source in self.force_bridge}
+            assert len(force_edges) == 1
+            for e in force_edges:
+                if self not in e.get_guaranteed_orphanable():
+                    raise DoorRouterException(
+                        f'Node {self} reachable from wrong direction.')
 
         def verify_guarantee(self):
             if not self.guarantee_nodes:
@@ -1490,7 +1489,6 @@ class Graph(RollbackMixin):
             self.rerank_and_reguarantee()
         else:
             self.rerank()
-        self.expand_all_guarantees()
 
         unranked = [n for n in rfr if n.rank is None]
         ranks = sorted(n.rank for n in rfr)
@@ -1501,6 +1499,8 @@ class Graph(RollbackMixin):
                     {n for n in rfr if n.rank == rank})
             nodes_by_rank_or_less |= self.nodes_by_rank[rank]
             self.nodes_by_rank_or_less[rank] = frozenset(nodes_by_rank_or_less)
+        for n in self.reachable_from_root:
+            n.simplify_full_guaranteed()
 
         assert self._reachable_from_root
         assert self._root_reachable_from
@@ -1630,60 +1630,13 @@ class Graph(RollbackMixin):
                 full_guaranteed = full_guaranteed - mediums
         return full_guaranteed
 
-    def expand_guarantee(self, guarantee, recursive=False, use_cache=True):
-        if not hasattr(self, '_expand_cache'):
-            self._expand_cache = {}
-        if not isinstance(guarantee, frozenset):
-            guarantee = frozenset(guarantee)
-        if guarantee in self._expand_cache:
-            return self._expand_cache[guarantee]
-        new_guarantee = frozenset({n2 for n1 in guarantee
-                                   if n1.guaranteed is not None
-                                   for n2 in n1.guaranteed})
-        if recursive and new_guarantee != guarantee:
-            new_guarantee = self.expand_guarantee(
-                    new_guarantee, recursive=recursive, use_cache=False)
-        if use_cache:
-            self._expand_cache[guarantee] = new_guarantee
-            return self.expand_guarantee(guarantee)
-        return new_guarantee
-
-    def expand_all_guarantees(self, nodes=None):
-        if nodes is None:
-            nodes = self.nodes
-        counter = 0
-        while True:
-            updated = False
+    def expand_all_guarantees(self):
+        for rank in sorted(self.nodes_by_rank.keys()):
+            nodes = self.nodes_by_rank[rank]
             for n in nodes:
-                if n.guaranteed is None:
-                    continue
-                new_guaranteed = self.expand_guarantee(n.guaranteed)
-                if new_guaranteed != n.guaranteed:
-                    assert new_guaranteed >= n.guaranteed
-                    updated = True
-                    n.guaranteed = new_guaranteed
-            if not updated:
-                break
-            counter += 1
-
-        while True:
-            updated = False
-            for n in nodes:
-                if n.full_guaranteed is None:
-                    continue
-                new_full_guaranteed = {self.expand_guarantee(g)
-                                       & self.conditional_nodes
-                                       for g in n.full_guaranteed}
-                if new_full_guaranteed != n.full_guaranteed:
-                    n.simplify_full_guaranteed()
-                    old_guaranteed = n.full_guaranteed
-                    n.full_guaranteed = new_full_guaranteed
-                    n.simplify_full_guaranteed()
-                    if n.full_guaranteed == old_guaranteed:
-                        continue
-                    updated = True
-            if not updated:
-                break
+                n.guaranteed = frozenset.union(
+                        *[n1.guaranteed for n1 in n.guaranteed])
+                n.simplify_full_guaranteed()
 
     def expand_requirements(self, requirements):
         assert isinstance(requirements, str)
