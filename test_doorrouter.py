@@ -94,7 +94,6 @@ def test_test():
     g.add_edge('root', 'a', directed=False)
     g.add_edge('a', 'b', directed=False)
     g.add_edge('root', 'c', condition='b', directed=False)
-    #assert g.reachable_from_root == g.nodes
     assert len(g.reachable_from_root) == 4
     assert g.reachable_from_root == g.root_reachable_from
 
@@ -1605,13 +1604,119 @@ def test_rerank1():
     g.add_edge('root', 'a', condition='x')
     g.add_edge('a', 'b', directed=False)
     g.add_edge('b', 'c', directed=False)
-    g.reduce=True
+    g.reduce = True
     g.clear_rooted_cache()
     g.rooted
     assert g.reduced_graph is not None
     assert g.by_label('c') in g.reachable_from_root
     assert 'a->b' in str(g._edge_reachable_from_root)
     assert g.by_label('c') not in g.by_label('b').guaranteed
+
+def test_smart_reachable_from1():
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('root', 'b')
+    g.add_edge('a', 'c')
+    g.add_edge('b', 'c')
+    g.add_edge('c', 'd', condition='a|b')
+    g.add_edge('d', 'root')
+    g.reduce = True
+    g.clear_rooted_cache()
+    g.rooted
+    assert g.by_label('a') not in g.by_label('c').guaranteed
+    assert g.by_label('b') not in g.by_label('c').guaranteed
+    assert g.by_label('c').full_guaranteed == {
+            frozenset({g.by_label('a')}),
+            frozenset({g.by_label('b')}),
+            frozenset({g.by_label('a'), g.by_label('b')}),
+            }
+    assert g.by_label('c') in g.root_reachable_from
+    assert g.root_reachable_from == g.reachable_from_root
+
+def test_smart_reachable_from2():
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('root', 'b')
+    g.add_edge('a', 'c')
+    g.add_edge('b', 'c')
+    g.add_edge('c', 'd', condition='a')
+    g.add_edge('c', 'e', condition='b')
+    g.add_edge('d', 'root')
+    g.add_edge('e', 'root')
+    g.reduce = True
+    g.clear_rooted_cache()
+    g.rooted
+    assert g.by_label('a') not in g.by_label('c').guaranteed
+    assert g.by_label('b') not in g.by_label('c').guaranteed
+    assert g.by_label('c').full_guaranteed == {
+            frozenset({g.by_label('a')}),
+            frozenset({g.by_label('b')}),
+            frozenset({g.by_label('a'), g.by_label('b')}),
+            }
+    assert g.by_label('d') in g.root_reachable_from
+    assert g.by_label('e') in g.root_reachable_from
+    assert g.by_label('c') in g.root_reachable_from
+    assert g.root_reachable_from == g.reachable_from_root
+
+def test_smart_reachable_from3():
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('root', 'b')
+    g.add_edge('a', 'c')
+    g.add_edge('b', 'c')
+    g.add_edge('c', 'd', condition='a')
+    g.add_edge('c', 'e', condition='b')
+    g.add_edge('c', 'x', directed=False)
+    g.add_edge('d', 'root')
+    g.add_edge('e', 'root')
+    g.reduce = True
+    g.add_edge('root', 'c')
+    g.clear_rooted_cache()
+    g.rooted
+    assert g.by_label('x') not in g.root_reachable_from
+    assert g.by_label('a') not in g.by_label('c').guaranteed
+    assert g.by_label('b') not in g.by_label('c').guaranteed
+    assert g.by_label('c').full_guaranteed == {
+            frozenset({g.by_label('a'), g.by_label('b')}),
+            frozenset({}),
+            }
+    assert g.by_label('d') in g.root_reachable_from
+    assert g.by_label('e') in g.root_reachable_from
+    assert g.by_label('c') not in g.root_reachable_from
+    assert g.root_reachable_from != g.reachable_from_root
+
+def test_smart_reachable_from4():
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('root', 'b')
+    g.add_edge('a', 'c')
+    g.add_edge('b', 'c')
+    g.add_edge('c', 'd', condition='a')
+    g.add_edge('c', 'e', condition='b')
+    g.add_edge('c', 'x', directed=False)
+    g.add_edge('d', 'root')
+    g.add_edge('e', 'root')
+    g.reduce = False
+    g.clear_rooted_cache()
+    g.rooted
+    assert g.by_label('c') in g.root_reachable_from
+    assert g.by_label('x') in g.root_reachable_from
+    g.commit()
+    g.add_edge('root', 'c')
+    g.clear_rooted_cache()
+    g.rooted
+    assert g.by_label('c') not in g.root_reachable_from
+    assert g.by_label('x') not in g.root_reachable_from
+    assert g.by_label('a') not in g.by_label('c').guaranteed
+    assert g.by_label('b') not in g.by_label('c').guaranteed
+    assert g.by_label('c').full_guaranteed == {
+            frozenset({g.by_label('a'), g.by_label('b')}),
+            frozenset({}),
+            }
+    assert g.by_label('d') in g.root_reachable_from
+    assert g.by_label('e') in g.root_reachable_from
+    assert g.by_label('c') not in g.root_reachable_from
+    assert g.root_reachable_from != g.reachable_from_root
 
 def test_custom():
     g = load_test_data('test_edge_data.txt')

@@ -72,7 +72,7 @@ class Graph(RollbackMixin):
     class Node(RollbackMixin):
         ROLLBACK_ATTRIBUTES = {
             'edges', 'reverse_edges', 'rank',
-            '_rooted', 'prereachable',
+            '_rooted', 'prereachable', 'prereachable_from',
             'guar_to', 'full_guar_to', 'strict_full_guar_to', 'edge_guar_to',
             '_rfn_cache', '_partial_rfn_data',
             '_free_travel_nodes', '_equivalent_nodes',
@@ -432,6 +432,20 @@ class Graph(RollbackMixin):
             self.full_guaranteed = self.parent.simplify_full_guaranteed(
                     {fg | self.guaranteed for fg in self.full_guaranteed})
 
+        def is_superior_guarantee_to(self, fgs):
+            smallers, biggers = set(), set()
+            combined = fgs | self.full_guaranteed
+            for g1 in combined:
+                for g2 in combined:
+                    if g1 < g2:
+                        smallers.add(g1)
+                        biggers.add(g2)
+            if not (smallers - biggers) <= fgs:
+                return False
+            if not (biggers - smallers) <= self.full_guaranteed:
+                return False
+            return True
+
         @property
         def guaranteed_edges(self):
             return self.parent.root.edge_guar_to[self]
@@ -666,10 +680,6 @@ class Graph(RollbackMixin):
                                   all(c.guaranteed is not None
                                       for c in e.true_condition)}
 
-                temp = {e for e in todo_edges if e.source in done_nodes}
-                if temp:
-                    todo_edges = temp
-
                 if reduced_edge_ranks:
                     e = min(todo_edges, key=lambda x: reduced_edge_ranks[x])
                     edges.remove(e)
@@ -846,6 +856,15 @@ class Graph(RollbackMixin):
             edges = set()
             done_edges = set()
             unreachable = set()
+
+            if hasattr(self, 'prereachable_from'):
+                old_fgs = self._rollback[(None, 'full_guar_to')]
+                for n in self.prereachable_from:
+                    if n not in old_fgs:
+                        continue
+                    if n.is_superior_guarantee_to(old_fgs[n]):
+                        reachable_from.add(n)
+
             while True:
                 todo_nodes = reachable_from - done_reachable_from
                 if not todo_nodes:
@@ -862,44 +881,43 @@ class Graph(RollbackMixin):
                     todo_nodes = reachable_from - done_reachable_from
 
                 if not todo_nodes:
+                    for n in reachable_from_root - reachable_from:
+                        test_edges = {e for e in n.edges
+                                      if e.destination in reachable_from}
+                        if not test_edges:
+                            continue
+                        for fg in n.full_guaranteed:
+                            if not any(e for e in test_edges
+                                   if e.is_satisfied_by(fg)):
+                                break
+                        else:
+                            assert n not in done_reachable_from
+                            reachable_from.add(n)
+                            todo_nodes.add(n)
+
+                if not todo_nodes:
                     break
 
                 for n in todo_nodes:
                     edges |= n.reverse_edges
                 done_reachable_from |= todo_nodes
 
-                failed_pairs = set()
-                for e in edges - done_edges:
+                todo_edges = edges - done_edges
+                for e in todo_edges:
+                    if e.source in reachable_from:
+                        continue
                     guaranteed = e.source.guaranteed
                     if guaranteed is None:
                         guaranteed = {e.source}
                     if e.is_satisfied_by(guaranteed):
                         reachable_from.add(e.source)
                         continue
-                    failed_pairs.add((e.source, e.destination))
-                done_edges |= edges
+                done_edges |= todo_edges
 
-                for source, destination in failed_pairs:
-                    # once again, perform "smart" traversal for
-                    # multi-edge multi-guaranteed nodes
-                    if source in reachable_from:
-                        continue
-                    fail_edges = {e for e in source.edges
-                                  if e.destination is destination}
-                    if len(fail_edges) < 2:
-                        continue
-                    if source.full_guaranteed is None:
-                        continue
-                    assert source.guaranteed is not None
-                    for ffg in source.full_guaranteed:
-                        for e in fail_edges:
-                            if e.is_satisfied_by(source.guaranteed | ffg):
-                                break
-                        else:
-                            break
-                    else:
-                        reachable_from.add(source)
-            return frozenset(reachable_from)
+            reachable_from = frozenset(reachable_from)
+            done_edges = frozenset(done_edges)
+            self.prereachable_from = reachable_from
+            return reachable_from
 
         def get_reachable_from(self):
             # brute force reachable_from by getting reachability for each node
@@ -1451,16 +1469,12 @@ class Graph(RollbackMixin):
             self.reduced_graph = None
             for n in self.nodes:
                 for attr in ['guar_to', 'full_guar_to', 'strict_full_guar_to',
-                             'edge_guar_to', 'prereachable']:
+                             'edge_guar_to',
+                             'prereachable', 'prereachable_from']:
                     value = getroll(n, attr)
                     if value is None:
                         continue
                     setattr(n, attr, value)
-
-            new_edges = self.all_edges - roll_edges
-            valid_edges = {e for e in self.all_edges
-                           if e.source.guaranteed is not None
-                           and e.is_satisfied_by_guaranteed()}
 
         elif self.reduce:
             self.reduced_graph = self.get_reduced_graph()
@@ -1593,7 +1607,7 @@ class Graph(RollbackMixin):
                     cleared = True
                 delattr(self, attr)
         for node in self.nodes:
-            for attr in ('_rooted', 'prereachable',
+            for attr in ('_rooted', 'prereachable', 'prereachable_from',
                          '_rfn_cache', '_partial_rfn_data',
                          '_free_travel_nodes', '_equivalent_nodes',
                          '_free_travel_guaranteed', '_equivalent_guaranteed'):
@@ -2250,6 +2264,7 @@ class Graph(RollbackMixin):
         t1 = time()
         while True:
             self.num_loops += 1
+
             random.seed(f'{self.seed}-{self.num_loops}')
 
             t3 = time()
