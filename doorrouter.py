@@ -18,7 +18,7 @@ DEFAULT_CONFIG_FILENAME = path.join(MODULE_FILEPATH, 'default.doorrouter.yaml')
 
 
 def log(line):
-    if DEBUG or True:
+    if DEBUG:
         line = line.strip()
         print(line)
         stdout.flush()
@@ -694,15 +694,25 @@ class Graph(RollbackMixin):
                 gedges = set()
                 if e.true_condition:
                     if self is self.parent.root:
-                        condition_fgs = []
                         for n in e.true_condition:
                             if n is not self.parent.root:
-                                n.get_guaranteed_reachable_only(strict=False)
-                                guaranteed |= n.guar_to[e.source]
-                                condition_fgs.append(n.full_guar_to[e.source])
-                                gedges |= n.edge_guar_to[e.source]
+                                # TODO: update full_guaranteed?
+                                seek_nodes = (e.source.guaranteed &
+                                              n.guar_to.keys())
+                                if not seek_nodes:
+                                    n.get_guaranteed_reachable_only(
+                                            strict=False,
+                                            seek_nodes=e.source.guaranteed)
+                                    seek_nodes = (e.source.guaranteed &
+                                                  n.guar_to.keys())
+                                best_node = min(
+                                        seek_nodes,
+                                        key=lambda x: (len(n.guar_to[x]),
+                                                       len(n.edge_guar_to[x]),
+                                                       x))
+                                guaranteed |= n.guar_to[best_node]
+                                gedges |= n.edge_guar_to[best_node]
                                 gedges |= self.parent.root.edge_guar_to[n]
-                        # TODO: update full_guaranteed
                     guaranteed = frozenset(guaranteed | e.true_condition)
                     full_guaranteed = {fg | e.true_condition
                                        for fg in full_guaranteed}
@@ -744,7 +754,6 @@ class Graph(RollbackMixin):
                     edges |= (e.destination.edges & valid_edges)
 
         def get_guaranteed_reachable_only(self, seek_nodes=None, strict=False):
-            #assert seek_nodes is None
             reachable_nodes = {self}
             done_reachable_nodes = set()
             edges = set()
@@ -780,6 +789,9 @@ class Graph(RollbackMixin):
             updated = False
             counter = 0
             while True:
+                if seek_nodes and seek_nodes & reachable_nodes:
+                    break
+
                 counter += 1
                 todo_nodes = reachable_nodes - done_reachable_nodes
                 if not (updated or todo_nodes):
@@ -1054,7 +1066,7 @@ class Graph(RollbackMixin):
                 return
             orphaned = set()
             for e in self.edges:
-                orphaned |= e.check_is_bridge()
+                orphaned |= e.get_guaranteed_orphanable()
             for r in sorted(self.required_nodes):
                 if r not in self.parent.double_rooted:
                     assert r in self.parent.initial_unconnected or \
@@ -1071,7 +1083,8 @@ class Graph(RollbackMixin):
                 return
             assert len(self.force_bridge) == 1
             force_edges = {e for e in self.reverse_edges
-                           if e.source in self.force_bridge}
+                           if e.source in self.force_bridge
+                           and not e.generated}
             assert len(force_edges) == 1
             for e in force_edges:
                 if self not in e.get_guaranteed_orphanable():
@@ -2264,11 +2277,8 @@ class Graph(RollbackMixin):
         t1 = time()
         while True:
             self.num_loops += 1
-
             random.seed(f'{self.seed}-{self.num_loops}')
-
             t3 = time()
-            self.priority_removals = None
 
             goal_reached = self.goal_reached
             if goal_reached:
@@ -2279,14 +2289,6 @@ class Graph(RollbackMixin):
                 except DoorRouterException:
                     assert self.unconnected
 
-            #if int(round(self.num_loops / PROGRESS_BAR_INTERVAL)) \
-            #        > previous_progress_bar:
-            #    previous_progress_bar += 1
-            #    if goal_reached:
-            #        stdout.write('+')
-            #    else:
-            #        stdout.write('.')
-            #    stdout.flush()
             if self.num_loops % 5 == 0:
                 if self.num_loops < 1000:
                     stdout.write(f' {self.num_loops:>3}')
@@ -2325,7 +2327,7 @@ class Graph(RollbackMixin):
                     add_edge = True
                 elif len(initial_unconnected) == len(self.unconnected):
                     add_edge = True
-                elif random.random() > ((1/failures)**0.5):
+                elif random.random() < ((1/failures)**0.25):
                     add_edge = True
                 else:
                     add_edge = False
@@ -2384,7 +2386,6 @@ class Graph(RollbackMixin):
                 print(f'Completed maze on attempt #{attempts} after '
                       f'{self.num_loops} operations and {round(t2-t1,1)} '
                       f'seconds.')
-                exit(0)
                 break
             except DoorRouterException as error:
                 print()
