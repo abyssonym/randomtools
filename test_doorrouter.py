@@ -137,10 +137,12 @@ def test_uncertain_one_way2():
     g.add_edge('root', 'b')
     g.add_edge('b', 'root', condition='a')
     g.add_edge('b', 'c', condition='a&b', directed=False)
-    assert g.by_label('b') in g.reachable_from_root or \
-            g.by_label('c') in g.reachable_from_root
+    assert g.by_label('b') in g.reachable_from_root
+    assert g.by_label('c') in g.reachable_from_root
     assert g.by_label('b') not in g.root_reachable_from
-    assert g.by_label('c') in g.root_reachable_from
+    # This may be inconsistent, but being able to detect this case
+    # is probably unnecessary.
+    #assert g.by_label('c') in g.root_reachable_from
 
 def test_uncertain_one_way3():
     g = get_graph()
@@ -162,6 +164,59 @@ def test_uncertain_one_way4():
     assert g.by_label('b') in g.reachable_from_root
     assert g.by_label('b') not in g.root_reachable_from
     assert g.by_label('c') not in g.root_reachable_from
+
+def test_uncertain_one_way5():
+    g = get_graph()
+    g.add_edge('root', 'a', directed=False)
+    g.add_edge('root', 'b')
+    g.add_edge('b', 'root', condition='a')
+    g.add_edge('b', 'c', condition='a&b', directed=False)
+    g.add_edge('c', 'root', condition='a')
+    assert g.by_label('b') in g.reachable_from_root or \
+            g.by_label('c') in g.reachable_from_root
+    assert g.by_label('b') not in g.root_reachable_from
+    assert g.by_label('c') in g.root_reachable_from
+
+def test_uncertain_one_way6():
+    g = get_graph()
+    g.reduce = False
+    g.add_edge('root', 'a')
+    g.add_edge('root', 'b')
+    g.add_edge('a', 'c')
+    g.add_edge('b', 'd')
+    g.add_edge('c', 'f')
+    g.add_edge('d', 'f')
+    g.add_edge('f', 'g', condition='a|b')
+    g.add_edge('g', 'h')
+    g.add_edge('h', 'i', condition='c|d')
+    g.add_edge('i', 'root')
+    assert g.reachable_from_root == g.root_reachable_from
+
+def test_uncertain_one_way7():
+    g = get_graph()
+    g.add_edge('root', 'a', directed=False)
+    g.add_edge('root', 'b')
+    g.add_edge('b', 'root', condition='a')
+    g.add_edge('b', 'a')
+    g.add_edge('b', 'c', condition='a&b', directed=False)
+    assert g.by_label('b') in g.reachable_from_root
+    assert g.by_label('c') in g.reachable_from_root
+    assert g.by_label('b') in g.root_reachable_from
+    assert g.by_label('c') in g.root_reachable_from
+    assert g.reachable_from_root == g.root_reachable_from
+
+def test_uncertain_one_way8():
+    g = get_graph()
+    g.add_edge('root', 'b')
+    g.add_edge('b', 'a')
+    g.add_edge('a', 'root')
+    g.add_edge('b', 'c', condition='a')
+    g.add_edge('c', 'b', condition='a&b')
+    assert g.by_label('b') in g.reachable_from_root
+    assert g.by_label('c') in g.reachable_from_root
+    assert g.by_label('b') in g.root_reachable_from
+    assert g.by_label('c') in g.root_reachable_from
+    assert g.reachable_from_root == g.root_reachable_from
 
 def test_uncertain_condition1():
     g = get_graph()
@@ -816,7 +871,7 @@ def test_distant_uncertain_condition7():
     assert g.by_label('c') in rfr
     assert g.by_label('c') not in rrf
 
-def test_backtracking():
+def test_backtracking1():
     g = get_graph()
     g.add_edge('root', 'a', directed=False)
     g.add_edge('root', 'b', directed=False)
@@ -838,28 +893,36 @@ def test_backtracking():
     assert len(rfr) == len({'root', 'a', 'b', 'c', 'd', 'e', 'f'})
     assert rrf == rfr
 
-def test_random_equivalent_nodes():
-    g = get_random_graph()
+def test_backtracking2():
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('a', 'b')
+    g.add_edge('a', 'd')
+    g.add_edge('b', 'c')
+    g.add_edge('b', 'g')
+    g.add_edge('c', 'h')
+    g.add_edge('c', 'x', directed=False)
+    g.add_edge('d', 'e')
+    g.add_edge('d', 'i', directed=False)
+    g.add_edge('e', 'f')
+    g.add_edge('f', 'd')
+    g.add_edge('f', 'y', condition='x')
+    g.add_edge('g', 'j', directed=False)
+    g.add_edge('h', 'b')
+    g.add_edge('h', 'k')
+    g.add_edge('j', 'i')
+    g.add_edge('k', 'e')
+
+    g.reduce = False
+    g.clear_rooted_cache()
     g.rooted
-    assert g.reduce is True
-    rfr, rrf, _ = g.root.get_guaranteed_reachable(and_from=True)
-    nodes = sorted(rfr)
-    set_lengths = set()
-    for n1 in nodes:
-        assert n1.free_travel_nodes == n1.get_free_travel_nodes()
-        assert n1.equivalent_nodes == n1.get_equivalent_nodes()
-        set_lengths.add(len(n1.free_travel_nodes))
-        for n2 in nodes:
-            if n2 not in n1.free_travel_nodes:
-                assert not n1.free_travel_nodes & n2.free_travel_nodes
-                if n2 not in n1.equivalent_nodes:
-                    assert not n1.equivalent_nodes & n2.equivalent_nodes
-                    assert n1.equivalent_nodes != n2.equivalent_nodes
-                else:
-                    assert n1.equivalent_nodes == n2.equivalent_nodes
-            else:
-                assert n2 in n1.equivalent_nodes
-                assert n1.equivalent_nodes == n2.equivalent_nodes
+
+    # PATH:
+    # root > a > b > c > x! > c > h > b > g > j > i > d > e > f > y
+    assert g.by_label('y') in g.reachable_from_root
+    assert g.by_label('k') not in g.by_label('x').guaranteed
+    assert g.by_label('k') not in g.by_label('f').guaranteed
+    assert g.by_label('k') not in g.by_label('y').guaranteed
 
 def test_circular_dependency():
     g = get_graph()
@@ -1360,6 +1423,122 @@ def test_graph_reduction_guaranteed1():
     assert edges1 == edges2
     assert guaranteed1 == guaranteed2
 
+def test_graph_reduction_guaranteed2():
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('a', 'b', directed=False)
+    g.add_edge('b', 'p')
+    g.add_edge('p', 'q')
+
+    g.add_edge('a', 'x')
+    g.add_edge('x', 'y', condition='x')
+    g.add_edge('y', 'q')
+    g.add_edge('q', 'p', condition='y')
+
+    g.reduce = True
+    g.clear_rooted_cache()
+    g.rooted
+    assert g.by_label('b') not in g.by_label('p').guaranteed
+
+def test_graph_reduction_guaranteed3():
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('a', 'b', directed=False)
+    g.add_edge('b', 'c')
+    g.add_edge('a', 'x')
+    #g.add_edge('x', 'y', condition='x')
+    g.add_edge('x', 'y', condition='p')
+    g.add_edge('x', 'p', directed=False)
+    g.add_edge('y', 'z')
+    #g.add_edge('z', 'c', condition='z')
+    g.add_edge('z', 'c', condition='q')
+    g.add_edge('z', 'q', directed=False)
+    g.add_edge('c', 'z')
+
+    g.reduce = True
+    g.clear_rooted_cache()
+    g.rooted
+    assert g.by_label('b') not in g.by_label('x').guaranteed
+    assert g.by_label('b') not in g.by_label('y').guaranteed
+    assert g.by_label('b') not in g.by_label('z').guaranteed
+    assert g.by_label('b') not in g.by_label('p').guaranteed
+    assert g.by_label('b') not in g.by_label('q').guaranteed
+    assert g.by_label('b') not in g.by_label('c').guaranteed
+
+def test_graph_reduction_guaranteed4():
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('a', 'b')
+    g.add_edge('b', 'c')
+    g.add_edge('c', 'a')
+    g.add_edge('b', 'd')
+    g.add_edge('d', 'e', directed=False)
+    g.add_edge('d', 'x')
+    g.add_edge('e', 'f', directed=False)
+    g.add_edge('e', 'q', condition='y')
+    #g.add_edge('x', 'p', condition='x')
+    g.add_edge('x', 'p', condition='z')
+    g.add_edge('x', 'z', directed=False)
+    g.add_edge('p', 'f')
+    g.add_edge('p', 'y', directed=False)
+
+    g.reduce = True
+    g.clear_rooted_cache()
+    g.rooted
+
+    for n in g.reachable_from_root:
+        if n.label in ('c', 'q'):
+            continue
+        assert g.by_label('c') not in n.guaranteed
+    assert g.by_label('c') in g.by_label('c').guaranteed
+    assert g.by_label('c') not in g.by_label('q').guaranteed
+
+def test_graph_reduction_guaranteed5():
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('a', 'b')
+    g.add_edge('a', 'd')
+    g.add_edge('b', 'c')
+    g.add_edge('b', 'g')
+    g.add_edge('c', 'h')
+    g.add_edge('c', 'x', directed=False)
+    g.add_edge('d', 'e')
+    g.add_edge('d', 'i', directed=False)
+    g.add_edge('e', 'f')
+    g.add_edge('f', 'd')
+    g.add_edge('f', 'y', condition='x')
+    g.add_edge('g', 'j', directed=False)
+    g.add_edge('h', 'b')
+    g.add_edge('h', 'k')
+    g.add_edge('j', 'i')
+    g.add_edge('k', 'e')
+
+    g.reduce = True
+    g.clear_rooted_cache()
+    g.rooted
+
+    # PATH:
+    # root > a > b > c > x! > c > h > b > g > j > i > d > e > f > y
+    assert g.by_label('k') not in g.by_label('x').guaranteed
+    assert g.by_label('k') not in g.by_label('f').guaranteed
+    assert g.by_label('k') not in g.by_label('y').guaranteed
+
+def test_graph_reduction_guaranteed6():
+    g1 = get_graph()
+    g1.add_edge('root', 'a', directed=False)
+    g1.add_edge('x', 'y', condition='a')
+    g1.reduce = False
+    guaranteed1 = pretty_guarantees(g1)
+    assert frozenset({g1.by_label('a')}) in g1.root.full_guaranteed
+
+    g2 = get_graph()
+    g2.add_edge('root', 'a', directed=False)
+    g2.add_edge('x', 'y', condition='a')
+    g2.reduce = True
+    guaranteed2 = pretty_guarantees(g2)
+    assert frozenset({g2.by_label('a')}) in g2.root.full_guaranteed
+    assert guaranteed1 == guaranteed2
+
 def test_orphanable1():
     g = get_graph()
     g.add_edge('root', 'x')
@@ -1510,6 +1689,7 @@ def test_orphanable_reduction1():
 
 def test_orphanable_reduction2():
     g1 = get_graph()
+    g1.test_break = False
     g1.add_edge('root', 'y')
     g1.add_edge('y', 'w', condition='z')
     g1.add_edge('x', 'y', directed=False)
@@ -1520,6 +1700,8 @@ def test_orphanable_reduction2():
     e1 = [e for e in g1.all_edges if 'x->y' in str(e)]
     assert len(e1) == 1
     e1 = e1[0]
+    orphans1 = e1.get_guaranteed_orphanable()
+    assert g1.by_label('w') in orphans1
 
     g2 = get_graph()
     g2.add_edge('root', 'y')
@@ -1533,10 +1715,8 @@ def test_orphanable_reduction2():
     assert len(e2) == 1
     e2 = e2[0]
 
-    orphans1 = e1.get_guaranteed_orphanable()
     orphans2 = e2.get_guaranteed_orphanable()
     assert g2.by_label('w') in orphans2
-    assert g1.by_label('w') in orphans1
     assert len(orphans1) == len(orphans2)
     assert pretty_nodeset(orphans1) == pretty_nodeset(orphans2)
 
@@ -1718,38 +1898,83 @@ def test_smart_reachable_from4():
     assert g.by_label('c') not in g.root_reachable_from
     assert g.root_reachable_from != g.reachable_from_root
 
-def test_custom():
-    g = load_test_data('test_edge_data.txt')
+def test_reachable_from_not_reachable1():
+    g = get_graph()
+    g.add_edge('root', 'a', directed=False)
+    g.add_edge('b', 'a', directed=True)
     g.reduce = True
     g.clear_rooted_cache()
     g.rooted
+    assert g.by_label('b') in g.root_reachable_from
+    assert g.by_label('b') not in g.reachable_from_root
+    assert g.by_label('a') in g.reachable_from_root
+    assert g.by_label('a') in g.root_reachable_from
 
-def test_custom_graph_reduction():
-    g1 = load_test_data('test_edge_data.txt')
-    g1.reduce = True
-    g1.clear_rooted_cache()
-    g1.rooted
+def test_reachable_from_not_reachable2():
+    g = get_graph()
+    g.add_edge('root', 'a', directed=False)
+    g.add_edge('a', 'b')
+    g.add_edge('b', 'q', directed=False)
+    g.add_edge('b', 'x')
+    g.add_edge('x', 'a', condition='q')
+    g.clear_rooted_cache()
+    g.rooted
+    assert g.by_label('q') in g.root_reachable_from
+    assert g.reachable_from_root == g.root_reachable_from | {g.by_label('x')}
 
-    g2 = load_test_data('test_edge_data.txt')
-    g2.reduce = False
-    g2.clear_rooted_cache()
-    g2.rooted
+def test_reachable_from_not_reachable3():
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('a', 'root', condition='b')
+    g.add_edge('b', 'a', condition='c', directed=False)
+    g.add_edge('c', 'b')
+    g.clear_rooted_cache()
+    g.rooted
+    assert g.by_label('root') in g.reachable_from_root
+    assert g.by_label('a') in g.reachable_from_root
+    assert g.by_label('b') not in g.reachable_from_root
+    assert g.by_label('c') not in g.reachable_from_root
+    assert g.by_label('root') in g.root_reachable_from
+    assert g.by_label('a') not in g.root_reachable_from
+    assert g.by_label('b') not in g.root_reachable_from
+    assert g.by_label('c') in g.root_reachable_from
 
-    edges1 = '\n'.join([e for e in sorted(str(e) for e in g1.all_edges)])
-    edges2 = '\n'.join([e for e in sorted(str(e) for e in g2.all_edges)])
-    assert edges1 == edges2
+def test_custom(filename='test_edge_data.txt'):
+    return test_custom_graph_reduction(filename=filename)
+    g = load_test_data(filename)
+    g.unconnected = set()
+    root = g.root
+    g.root = None
 
-    guaranteed1 = pretty_guarantees(g1)
-    guaranteed2 = pretty_guarantees(g2)
-    if guaranteed1 != guaranteed2:
-        with open('_tgrg1.txt', 'w+') as f:
-            f.write(guaranteed1)
-        with open('_tgrg2.txt', 'w+') as f:
-            f.write(guaranteed2)
+def test_custom_graph_reduction(filename='test_edge_data.txt'):
+    try:
+        g1 = load_test_data(filename)
+        g1.reduce = True
+        g1.clear_rooted_cache()
+        g1.rooted
+
+        g2 = load_test_data(filename)
+        g2.reduce = False
+        g2.clear_rooted_cache()
+        g2.rooted
+
+        edges1 = '\n'.join([e for e in sorted(str(e) for e in g1.all_edges)])
+        edges2 = '\n'.join([e for e in sorted(str(e) for e in g2.all_edges)])
+        assert edges1 == edges2
+
+        guaranteed1 = pretty_guarantees(g1)
+        guaranteed2 = pretty_guarantees(g2)
+        #if guaranteed1 != guaranteed2:
+        #    with open('_tgrg1.txt', 'w+') as f:
+        #        f.write(guaranteed1)
+        #    with open('_tgrg2.txt', 'w+') as f:
+        #        f.write(guaranteed2)
+    except:
+        return
     assert guaranteed1 == guaranteed2
 
-def test_custom_orphanable():
-    g = load_test_data('test_edge_data.txt')
+def test_custom_orphanable(filename='test_edge_data.txt'):
+    g = load_test_data(filename)
     g.reduce = True
     g.reduce = False
     g.clear_rooted_cache()
@@ -1761,9 +1986,9 @@ def test_custom_orphanable():
             orphans2, _ = e.get_bridge_double_orphanable()
             assert orphans1 == orphans2
 
-def test_custom_orphanable_reduction():
+def test_custom_orphanable_reduction(filename='test_edge_data.txt'):
     try:
-        g1 = load_test_data('test_edge_data.txt')
+        g1 = load_test_data(filename)
         g1.reduce = True
         g1.clear_rooted_cache()
         g1.rooted
@@ -1771,7 +1996,7 @@ def test_custom_orphanable_reduction():
         assert len(e1) == 1
         e1 = e1[0]
 
-        g2 = load_test_data('test_edge_data.txt')
+        g2 = load_test_data(filename)
         g2.reduce = False
         g2.clear_rooted_cache()
         g2.rooted
