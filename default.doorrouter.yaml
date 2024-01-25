@@ -1,14 +1,13 @@
 logic_filename:       router_logic.txt
 nodes_filename:       router_nodes.txt
-retry_limit:          2000  # Max loops before reaching goal
-retry_limit_close:    3000  # Max cleanup loops when goal has been reached
+retry_limit:           500  # Max loops before reaching goal
+retry_limit_close:    1000  # Max cleanup loops when goal has been reached
 time_limit:            300  # Seconds before giving up
+fg_cache_limit:      10000  # Max cache size for node guarantee simplification
 map_size:             1.00  # Percentage of all possible nodes to connect
 map_strictness:       0.95  # Lower bound portion of selected nodes to connect
 progression_speed:    0.00  # Rate to prioritize key nodes
-avoid_oneway_traps:   True  # Create a graph where you can't get stuck
-oneway_cleanup_rate:  0.00  # Rate to attempt to close one-way loops
+avoid_softlocks:      True  # Create a graph where you can't get stuck
 trap_doors:           0.00  # Rate to allow one-way trick doors
-linearity:            0.00  # Rate to avoid connecting nodes of different ranks
 skip_complex_nodes:   0.00  # Rate to skip nodes that are difficult to route
 lazy_complex_nodes:   False # Simplify complex nodes (softlock potential)
