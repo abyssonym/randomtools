@@ -3,6 +3,8 @@
 from .doorrouter import Graph, DoorRouterException
 from string import ascii_lowercase, ascii_uppercase
 from sys import exc_info
+from time import time
+from subprocess import call
 import random
 import traceback
 
@@ -18,7 +20,7 @@ def get_graph(labels=None):
     assert g.reduce
     return g
 
-def load_test_data(filename):
+def load_test_data(filename, unconnected=None):
     try:
         node_labels = set()
         edge_labels = set()
@@ -50,6 +52,15 @@ def load_test_data(filename):
             n = g.Node(n, g)
         for source, destination, condition in edge_labels:
             g.add_edge(source, destination, condition=condition)
+        if unconnected is not None:
+            g.unconnected = set()
+            with open(unconnected) as f:
+                for line in f:
+                    n = g.by_label(line.strip())
+                    if n is None:
+                        n = g.Node(line.strip(), g)
+                    g.unconnected.add(n)
+            g.initial_unconnected = frozenset(g.unconnected)
         g.set_root(g.by_label('root'))
         g.testing = False
     except AssertionError:
@@ -72,6 +83,102 @@ def get_random_graph():
                 g.add_edge(n1, n2, condition=frozenset(condition))
     g.rooted
     return g
+
+class Replay:
+    def __init__(self, filename, root='root'):
+        self.progress_index = -1
+        self.progression = {}
+        with open(filename) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                if line.count(' ') >= 2:
+                    index, command, parameter = line.split(' ', 2)
+                else:
+                    index, command = line.split(' ')
+                    parameter = None
+                index = int(index)
+                self.progression[index] = (command, parameter)
+
+        self.graph = Graph(testing=True)
+        for _, parameter in self.progression.values():
+            if parameter is None:
+                continue
+            edge, _ = parameter.split(':')
+            a, b = edge.split('->')
+            _, cs = parameter.split('[')
+            assert cs.endswith(']')
+            cs = cs[:-1]
+            if cs:
+                cs = cs.split(', ')
+            else:
+                cs = []
+            for n in [a, b] + cs:
+                self.add_node(n)
+        root = self.graph.by_label(root)
+        self.graph.set_root(root)
+        self.graph.testing = False
+        self.graph.reduce = True
+        self.needs_commit = True
+
+    def add_node(self, label):
+        n = self.graph.by_label(label)
+        if n is None:
+            n = self.graph.Node(label, parent=self.graph)
+        self.needs_commit = True
+        return n
+
+    def add_edge(self, parameter):
+        edge, _ = parameter.split(':')
+        a, b = edge.split('->')
+        _, cs = parameter.split('[')
+        assert cs.endswith(']')
+        cs = cs[:-1]
+        cs = cs.split(', ')
+        self.graph.add_edge(a, b, condition='&'.join(cs))
+        self.needs_commit = True
+
+    def remove_edge(self, parameter):
+        edges = [e for e in self.graph.all_edges if str(e) == parameter]
+        assert edges
+        for e in edges:
+            e.remove()
+        self.needs_commit = True
+
+    def commit(self, ignore_commits=False):
+        if not self.needs_commit:
+            return
+        self.graph.clear_rooted_cache()
+        if not ignore_commits:
+            self.graph.rooted
+        self.graph.commit()
+        self.needs_commit = False
+
+    def rollback(self):
+        if not self.needs_commit:
+            return
+        self.graph.rollback()
+        self.needs_commit = False
+
+    def advance(self, ignore_commits=False):
+        self.progress_index += 1
+        if self.progress_index not in self.progression:
+            return
+        command, parameter = self.progression[self.progress_index]
+        assert command in ('ADD', 'REMOVE', 'COMMIT', 'ROLLBACK')
+        if command == 'ADD':
+            self.add_edge(parameter)
+        elif command == 'REMOVE':
+            self.remove_edge(parameter)
+        elif command == 'COMMIT':
+            self.commit(ignore_commits=ignore_commits)
+        elif command == 'ROLLBACK':
+            self.rollback()
+
+    def advance_to(self, index, ignore_commits=False):
+        while self.progress_index < index:
+            self.advance(ignore_commits=ignore_commits)
 
 def pretty_guarantees(g):
     s = ''
@@ -1997,9 +2104,176 @@ def test_reduced_edges2():
     assert e.destination.rooted
     assert e in g.root.edge_guar_to[y]
 
+def test_rerank2():
+    VERIFICATION = {
+        'root': 1,
+        'a': 2,
+        'b': 3, 'f': 3,
+        'c': 4, 'v': 4, 'z': 4,
+        'q': 5, 'd': 5, 'w': 5, 'x': 5,
+        'e': 6,
+        'y': 6,
+    }
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('a', 'b', directed=False)
+    g.add_edge('b', 'c', directed=False)
+    g.add_edge('c', 'q', directed=False)
+    g.add_edge('c', 'd')
+    g.add_edge('d', 'e')
+    g.add_edge('e', 'w')
+    g.add_edge('w', 'y', condition='q')
+    g.add_edge('a', 'f')
+    g.add_edge('f', 'v')
+    g.add_edge('f', 'z')
+    g.add_edge('z', 'x')
+
+    g.reduce = True
+    g.clear_rooted_cache()
+    g.rooted
+    g.commit()
+    g.add_edge('v', 'w', directed=False)
+    g.clear_rooted_cache()
+    g.rooted
+
+    ranks1 = {(n.label, n.rank) for n in g.rooted}
+    assert len(g.rooted) == len(VERIFICATION)
+    assert g.by_label('d') not in g.by_label('y').guaranteed
+    assert g.by_label('e') not in g.by_label('y').guaranteed
+    for n in g.rooted:
+        assert VERIFICATION[n.label] == n.rank
+
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('a', 'b', directed=False)
+    g.add_edge('b', 'c', directed=False)
+    g.add_edge('c', 'q', directed=False)
+    g.add_edge('c', 'd')
+    g.add_edge('d', 'e')
+    g.add_edge('e', 'w')
+    g.add_edge('w', 'y', condition='q')
+    g.add_edge('a', 'f')
+    g.add_edge('f', 'v')
+    g.add_edge('f', 'z')
+    g.add_edge('z', 'x')
+
+    g.reduce = True
+    g.add_edge('v', 'w', directed=False)
+    g.clear_rooted_cache()
+    g.rooted
+
+    ranks2 = {(n.label, n.rank) for n in g.rooted}
+    assert g.by_label('d') not in g.by_label('y').guaranteed
+    assert g.by_label('e') not in g.by_label('y').guaranteed
+    assert len(g.rooted) == len(VERIFICATION)
+    for n in g.rooted:
+        assert VERIFICATION[n.label] == n.rank
+
+    assert ranks1 == ranks2
+
+def test_rerank3():
+    g = get_graph()
+    g.reduce = True
+    g.add_edge('root', 'a')
+    g.add_edge('root', 'q')
+    g.add_edge('a', 'b')
+    g.add_edge('a', 'p', directed=False)
+    g.add_edge('b', 'c')
+    g.add_edge('c', 'root')
+    g.add_edge('q', 'x', condition='p')
+    g.add_edge('a', 'root', condition='q')
+    g.add_edge('y', 'c')
+
+    g.add_edge('x', 'y')
+    g.clear_rooted_cache()
+    ranks1 = {(n.label, n.rank) for n in g.rooted}
+
+    assert g.by_label('x').guaranteed == (g.by_label('q').guaranteed |
+                                          g.by_label('p').guaranteed |
+                                          {g.by_label('x')})
+    assert g.by_label('y').guaranteed == (g.by_label('x').guaranteed |
+                                          {g.by_label('y')})
+
+    g = get_graph()
+    g.reduce = True
+    g.add_edge('root', 'a')
+    g.add_edge('root', 'q')
+    g.add_edge('a', 'b')
+    g.add_edge('a', 'p', directed=False)
+    g.add_edge('b', 'c')
+    g.add_edge('c', 'root')
+    g.add_edge('q', 'x', condition='p')
+    g.add_edge('a', 'root', condition='q')
+    g.add_edge('y', 'c')
+
+    g.rooted
+    g.commit()
+    assert g.by_label('x').guaranteed == (g.by_label('q').guaranteed |
+                                          g.by_label('p').guaranteed |
+                                          g.by_label('c').guaranteed |
+                                          {g.by_label('x')})
+
+    g.add_edge('x', 'y')
+    g.clear_rooted_cache()
+    ranks2 = {(n.label, n.rank) for n in g.rooted}
+
+    assert g.by_label('x').guaranteed == (g.by_label('q').guaranteed |
+                                          g.by_label('p').guaranteed |
+                                          {g.by_label('x')})
+    assert g.by_label('y').guaranteed == (g.by_label('x').guaranteed |
+                                          {g.by_label('y')})
+
+    assert ranks1 == ranks2
+
+def test_custom_replay(filename='test_replay.txt', midpoint=None):
+    try:
+        rep1 = Replay(filename, root='1d1-001')
+        lastpoint = max(rep1.progression)
+        #print('ROOTING 1')
+        rep1.advance_to(lastpoint, ignore_commits=True)
+        rep1.graph.rooted
+        #print('ROOTED 1')
+
+        rep2 = Replay(filename, root='1d1-001')
+        #print('ROOTING 2 PT1')
+        rep2.advance_to(midpoint, ignore_commits=True)
+        #print('ROOTING 2 PT2')
+        rep2.advance_to(lastpoint, ignore_commits=False)
+        rep2.graph.rooted
+        #print('ROOTED 2')
+
+        g1 = rep1.graph
+        g2 = rep2.graph
+        #n1 = g1.by_label('02f-003')
+        #n2 = g2.by_label('02f-003')
+        ranks1 = {(n.label, n.rank) for n in g1.rooted}
+        ranks2 = {(n.label, n.rank) for n in g2.rooted}
+    except:
+        return
+    assert ranks1 == ranks2
+
+def test_custom_replay_full(filename='test_replay.txt', midpoint=0):
+    slowrep = Replay(filename, root='1d1-001')
+    slowrep.advance_to(midpoint, ignore_commits=True)
+    checkpoints = {i for i in slowrep.progression
+                   if i >= midpoint and 'COMMIT' in slowrep.progression[i]}
+    checkpoints.add(midpoint)
+    for checkpoint in sorted(checkpoints):
+        slowrep.advance_to(checkpoint, ignore_commits=False)
+        fastrep = Replay(filename, root='1d1-001')
+        fastrep.advance_to(checkpoint, ignore_commits=True)
+        slowranks = {(n.label, n.rank) for n in slowrep.graph.rooted}
+        fastranks = {(n.label, n.rank) for n in fastrep.graph.rooted}
+        if slowranks != fastranks:
+            print(f'FAIL at line {checkpoint}: '
+                  f'{slowrep.progression[checkpoint]}')
+            import pdb; pdb.set_trace()
+        assert slowranks == fastranks
+        print(f'Checkpoint {checkpoint} CLEARED')
+
 def test_custom(filename='test_edge_data.txt'):
     g = load_test_data(filename)
-    g.reduce = False
+    g.reduce = True
     g.clear_rooted_cache()
     g.rooted
 
