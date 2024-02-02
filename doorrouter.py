@@ -1130,7 +1130,11 @@ class Graph(RollbackMixin):
                                  if e.source in rank_dict
                                  and e not in avoid_edges
                                  and e.source not in avoid_nodes
-                                 and rank_dict[n] > rank_dict[e.source]}
+                                 and rank_dict[n] > rank_dict[e.source]
+                                 and e.true_condition <= self.parent.rooted
+                                 and ((not e.true_condition) or
+                                      (not e.true_condition &
+                                       e.get_guaranteed_orphanable()))}
                 paths = [(e, shortest_recurse(e.source))
                          for e in reverse_edges]
                 e, shortest = min(paths, key=lambda x: (len(x[1]), x))
@@ -1273,7 +1277,8 @@ class Graph(RollbackMixin):
 
     def __init__(self, filename=None, config=None, preset_connections=None,
                  strict_validator=None, lenient_validator=None,
-                 testing=False, do_reduce=None, parent=None):
+                 testing=False, do_reduce=None, parent=None,
+                 definition_overrides=None):
         self.testing = testing
         self.parent = parent
         if do_reduce is not None:
@@ -1298,6 +1303,7 @@ class Graph(RollbackMixin):
 
         self.strict_validator = strict_validator
         self.lenient_validator = lenient_validator
+        self.definition_overrides = definition_overrides
 
         self.fg_simplify_cache = {}
 
@@ -1540,12 +1546,20 @@ class Graph(RollbackMixin):
             if line.startswith('.def'):
                 _, definition_label, requirements = line.split(' ')
                 assert definition_label not in self.definitions
+                if self.definition_overrides and \
+                        definition_label in self.definition_overrides:
+                    requirements = self.definition_overrides[definition_label]
                 self.definitions[definition_label] = \
                         self.expand_requirements(requirements)
                 continue
 
             if line.startswith('.start'):
                 _, root_label = line.split(' ')
+                if root_label in self.definitions:
+                    temp = self.definitions[root_label]
+                    assert len(temp) == 1
+                    assert isinstance(list(temp)[0], frozenset)
+                    root_label, = temp.pop()
                 self.set_root(self.get_by_label(root_label))
                 continue
 
