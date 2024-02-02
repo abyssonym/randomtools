@@ -320,8 +320,10 @@ class Graph(RollbackMixin):
             self.parent.nodes.add(self)
 
             self.required_nodes = set()
-            self.guarantee_nodes = set()
+            self.guarantee_nodesets = set()
             self.twoway_conditions = set()
+            self.orphanless = False
+
             self.guar_to = {}
             self.full_guar_to = {}
             self.strict_full_guar_to = {}
@@ -441,22 +443,9 @@ class Graph(RollbackMixin):
             return True
 
         def invalidate_guar_to(self):
-            if self is not self.parent.root:
-                self.strict_full_guar_to = {}
-            if not hasattr(self, 'prereachable'):
-                self.prereachable = {}
-
-            if True in self.prereachable:
-                del(self.prereachable[True])
-            if False in self.prereachable:
-                prenodes, predges = self.prereachable[False]
-                prenodes, predges = set(prenodes), set(predges)
-            else:
-                prenodes, predges = set(), set()
-            if self is self.parent.root:
-                predges = {e for e in predges if not e.true_condition}
-            prenodes |= {self}
-            self.prereachable[False] = frozenset(prenodes), frozenset(predges)
+            assert self is self.parent.root
+            if hasattr(self, 'prereachable'):
+                del(self.prereachable)
 
         @property
         def guaranteed_edges(self):
@@ -565,14 +554,24 @@ class Graph(RollbackMixin):
                         edge2.destination.reverse_edges.remove(edge2)
                         self.parent.all_edges.remove(edge2)
 
-        def add_guarantee(self, other):
-            assert isinstance(other, Graph.Node)
+        def add_guarantee(self, nodeset):
+            assert isinstance(nodeset, frozenset)
+            temp = set()
+            for n in nodeset:
+                if isinstance(n, str):
+                    temp.add(self.by_label(n))
+                else:
+                    temp.add(n)
+            nodeset = temp
+            assert all(isinstance(n, Graph.Node) for n in nodeset)
             if self.parent.config['lazy_complex_nodes']:
-                self.required_nodes.add(other)
-            else:
-                self.guarantee_nodes.add(other)
-                self.parent.guarantee_nodes.add(other)
-                self.local_conditional_nodes.add(other)
+                for n in nodeset:
+                    self.required_nodes.add(n)
+                return
+            self.guarantee_nodesets.add(frozenset(nodeset))
+            for node in nodeset:
+                self.parent.guarantee_nodes.add(node)
+                self.local_conditional_nodes.add(node)
 
         def add_twoway_condition(self, condition):
             assert '!' not in condition
@@ -671,6 +670,10 @@ class Graph(RollbackMixin):
             root = self.parent.root
             edges = edges & valid_edges
             guar_to = self.guar_to
+
+            if not hasattr(self.parent, 'problematic_edges'):
+                self.parent.problematic_edges = set()
+
             if self is root:
                 strict = False
             if strict:
@@ -728,6 +731,7 @@ class Graph(RollbackMixin):
                         guar_to[e.source] | {e.destination} | e.true_condition)
                 gedges = self.edge_guar_to[e.source] | {e}
 
+                special_gedges, special_guaranteed = set(), set()
                 if self is root and e.true_condition:
                     for n in e.true_condition:
                         if n is root:
@@ -736,11 +740,15 @@ class Graph(RollbackMixin):
                         n.get_guaranteed_reachable_only(strict=False)
                         n.propagate_guarantees(
                                 n.edges, valid_edges, strict=False)
-                        gedges |= n.edge_guar_to[e.source]
-                        gedges |= root.edge_guar_to[n]
-                        guaranteed |= n.guar_to[e.source] | \
-                                {n2 for e2 in gedges for n2 in
+                        special_gedges |= (n.edge_guar_to[e.source] |
+                                           root.edge_guar_to[n])
+                        special_guaranteed |= n.guar_to[e.source] | \
+                                {n2 for e2 in special_gedges for n2 in
                                  (e2.source, e2.destination)}
+
+                if special_gedges and not (gedges >= special_gedges):
+                    gedges |= special_gedges
+                    self.parent.problematic_edges.add(e)
 
                 if e.destination not in self.edge_guar_to:
                     old_gedges = None
@@ -750,6 +758,11 @@ class Graph(RollbackMixin):
                     if old_gedges != gedges:
                         self.edge_guar_to[e.destination] = frozenset(
                                 old_gedges & gedges)
+
+                if special_guaranteed and \
+                        not (guaranteed >= special_guaranteed):
+                    guaranteed |= special_guaranteed
+                    self.parent.problematic_edges.add(e)
 
                 if e.destination not in guar_to:
                     old_guar = None
@@ -1125,6 +1138,65 @@ class Graph(RollbackMixin):
 
             return shortest_recurse(other)
 
+        def get_naive_avoid_reachable(
+                self, seek_nodes=None, avoid_nodes=None, avoid_edges=None,
+                extra_satisfaction=None, no_recurse=False):
+            if seek_nodes is None:
+                seek_nodes = set()
+            if avoid_nodes is None:
+                avoid_nodes = set()
+            if avoid_edges is None:
+                avoid_edges = set()
+            if extra_satisfaction is None:
+                extra_satisfaction = set()
+            guar_to = {n: (self.guaranteed | n.guaranteed)
+                       for n in self.parent.rooted}
+            nodes = {self}
+            done_nodes = set(avoid_nodes)
+            edges = set()
+            done_edges = set(avoid_edges)
+
+            want_nodes = set()
+            updated = False
+            while True:
+                if nodes & seek_nodes:
+                    break
+
+                todo_nodes = nodes - (done_nodes | avoid_nodes)
+                if not (todo_nodes or no_recurse):
+                    double_check_nodes = (nodes & want_nodes) \
+                            - (extra_satisfaction | avoid_nodes)
+                    for n in double_check_nodes:
+                        test = n.get_naive_avoid_reachable(
+                                seek_nodes={self},
+                                avoid_nodes=avoid_nodes,
+                                avoid_edges=avoid_edges,
+                                extra_satisfaction=set(self.guaranteed),
+                                no_recurse=True)
+                        if self in test:
+                            updated = True
+                            extra_satisfaction.add(n)
+
+                if not (todo_nodes or updated):
+                    break
+                updated = False
+
+                for n in todo_nodes:
+                    edges |= (n.edges - avoid_edges)
+                done_nodes |= todo_nodes
+
+                todo_edges = edges - (done_edges | avoid_edges)
+                for e in todo_edges:
+                    guaranteed = guar_to[e.source]
+                    if e.is_satisfied_by(guaranteed | extra_satisfaction):
+                        assert not guaranteed & avoid_nodes
+                        nodes.add(e.destination)
+                        done_edges.add(e)
+                    else:
+                        want_nodes |= e.true_condition
+
+            return nodes
+
         def verify_required(self):
             if not self.required_nodes:
                 return
@@ -1137,6 +1209,8 @@ class Graph(RollbackMixin):
                 if r not in self.parent.double_rooted:
                     assert r in self.parent.initial_unconnected or \
                             r.label in self.parent.preset_connections.keys()
+                    raise DoorRouterException(f'{self} requires {r}.')
+                if self in r.guaranteed:
                     raise DoorRouterException(f'{self} requires {r}.')
                 if r in orphaned:
                     raise DoorRouterException(f'{self} requires {r}.')
@@ -1163,21 +1237,41 @@ class Graph(RollbackMixin):
                 assert e.source.rank < e.destination.rank
 
         def verify_guarantee(self):
-            if not self.guarantee_nodes:
+            if not self.guarantee_nodesets:
                 return
             if not self.rooted:
                 return
-            if self.guarantee_nodes - self.guaranteed:
+            for nodeset in self.guarantee_nodesets:
+                if nodeset <= self.guaranteed:
+                    break
+            else:
                 raise DoorRouterException(
                     f'Node {self} reachable without guaranteed nodes.')
             return
+
+        def verify_orphanless(self):
+            if not self.orphanless:
+                return
+            if not self.rooted:
+                return
+            local_reachable = {e.destination for e in self.edges
+                               if not e.generated}
+            for n in self.parent.reachable_from_root:
+                if n is self:
+                    continue
+                if n in local_reachable:
+                    continue
+                if self in n.guaranteed:
+                    raise DoorRouterException(
+                        f'Node {self} can not be required by any other node.')
 
         def verify(self):
             self.verify_required()
             self.verify_bridge()
             self.verify_guarantee()
+            self.verify_orphanless()
 
-    def __init__(self, filename=None, preset_connections=None,
+    def __init__(self, filename=None, config=None, preset_connections=None,
                  strict_validator=None, lenient_validator=None,
                  testing=False, do_reduce=None, parent=None):
         self.testing = testing
@@ -1186,17 +1280,22 @@ class Graph(RollbackMixin):
             self.reduce = do_reduce
         else:
             self.reduce = REDUCE and not self.parent
-        if filename is None:
-            filename = DEFAULT_CONFIG_FILENAME
-        with open(filename) as f:
-            self.config = yaml.load(f.read(), Loader=yaml.SafeLoader)
-        self.config['config_filename'] = filename
+
+        if config is None:
+            if filename is None:
+                filename = DEFAULT_CONFIG_FILENAME
+            with open(filename) as f:
+                self.config = yaml.load(f.read(), Loader=yaml.SafeLoader)
+            self.config['config_filename'] = filename
+        else:
+            self.config = config
         with open(DEFAULT_CONFIG_FILENAME) as f:
             defaults = yaml.load(f.read(), Loader=yaml.SafeLoader)
         for key in defaults:
             if key not in self.config:
                 self.config[key] = defaults[key]
                 print(f'Using default value {defaults[key]} for "{key}".')
+
         self.strict_validator = strict_validator
         self.lenient_validator = lenient_validator
 
@@ -1470,8 +1569,7 @@ class Graph(RollbackMixin):
                 node = self.get_by_label(node_label)
                 requirements = self.expand_requirements(requirements)
                 for req in requirements:
-                    for r in req:
-                        node.add_guarantee(self.get_by_label(r))
+                    node.add_guarantee(req)
                 continue
 
             if line.startswith('.unreachable'):
@@ -1480,6 +1578,12 @@ class Graph(RollbackMixin):
                 self.nodes.remove(node)
                 self.connectable.remove(node)
                 self.unconnected.remove(node)
+                continue
+
+            if line.startswith('.orphanless'):
+                _, node_label = line.split(' ')
+                node = self.get_by_label(node_label)
+                node.orphanless = True
                 continue
 
             assert not line.startswith('.')
@@ -1526,7 +1630,7 @@ class Graph(RollbackMixin):
         reduced = self.necessary_nodes & self.unconnected
         too_complex = set()
         for n in sorted(self.unconnected):
-            if (not n.guarantee_nodes) or \
+            if (not n.guarantee_nodesets) or \
                     random.random() > self.config['skip_complex_nodes']:
                 continue
             else:
@@ -1537,7 +1641,7 @@ class Graph(RollbackMixin):
             if not candidates:
                 break
             chosen = random.choice(candidates)
-            if chosen.guarantee_nodes and random.random() \
+            if chosen.guarantee_nodesets and random.random() \
                     > self.config['map_size'] * self.config['map_strictness']:
                 continue
             backup_reduced = set(reduced)
@@ -1619,14 +1723,16 @@ class Graph(RollbackMixin):
                     if value is None:
                         continue
                     setattr(n, attr, value)
-                n.invalidate_guar_to()
+            self.root.invalidate_guar_to()
             rfr, rrf, erfr = self.root.get_guaranteed_reachable(
                     and_from=True, do_reduce=False)
         elif self.reduce:
+            self.problematic_edges = set()
             self.reduced_graph = self.get_reduced_graph()
             rfr, rrf, erfr = self.root.get_guaranteed_reachable(
                     and_from=True, do_reduce=True)
         else:
+            self.problematic_edges = set()
             self.reduced_graph = None
             rfr, rrf, erfr = self.root.get_guaranteed_reachable(
                     and_from=True, do_reduce=False)
@@ -1917,6 +2023,7 @@ class Graph(RollbackMixin):
             b.force_bridge.add(a)
         elif '>>' in edgestr:
             a, b = self.split_edgestr(edgestr, '>>')
+            a.add_edges(b, conditions)
             a.required_nodes.add(b)
         elif '=' in edgestr:
             a, b = self.split_edgestr(edgestr, '=')
@@ -2241,8 +2348,13 @@ class Graph(RollbackMixin):
         for o in sorted(self.unconnected):
             if not o.rooted:
                 continue
-            require_guarantee = o.required_nodes | o.guarantee_nodes
-            if require_guarantee <= self.rooted:
+            if o.guarantee_nodesets:
+                for nodeset in o.guarantee_nodesets:
+                    require_guarantee = o.required_nodes | nodeset
+                    if require_guarantee <= self.rooted:
+                        options.append(o)
+                        break
+            elif o.required_nodes <= self.rooted:
                 options.append(o)
         if not options:
             raise DoorRouterException('No connectable options.')
@@ -2409,10 +2521,6 @@ class Graph(RollbackMixin):
                 for b in group_b:
                     enemy_nodes[b] |= group_a
 
-            if n.guarantee_nodes:
-                enemy_nodes[n] |= {n2 for n2 in self.reachable_from_root
-                                   if n.guarantee_nodes - n2.guaranteed}
-
         rooted_unconnected = self.reachable_from_root & self.unconnected
         if test or (
                 (not self.goal_reached) and
@@ -2449,11 +2557,16 @@ class Graph(RollbackMixin):
         return edges
 
     def procedural_add_edge(self, strict_candidates, lenient_candidates):
-        options = sorted(self.get_add_edge_options())
+        options = self.get_add_edge_options()
 
         enemy_nodes = self.get_enemy_nodes()
 
-        a = random.choice(options)
+        temp = max(options,
+                   key=lambda o: len(self.discourage_nodes[o]))
+        temp = len(self.discourage_nodes[temp])
+        options = [o for o in options
+                   if len(self.discourage_nodes[o]) == temp]
+        a = random.choice(sorted(options))
         others = set(n for n in self.unconnected
                      if n.twoway_conditions == a.twoway_conditions)
 
@@ -2554,6 +2667,9 @@ class Graph(RollbackMixin):
         print('Generating solution paths...')
         if not goal_nodes:
             goal_nodes = set(self.goal_nodes)
+        expanded = self.expand_guaranteed(goal_nodes)
+        goal_nodes |= expanded & self.conditional_nodes
+
         paths = {}
         while True:
             for n in sorted(goal_nodes, key=lambda n: n.rank):
@@ -2572,6 +2688,8 @@ class Graph(RollbackMixin):
         abridged_paths = []
         seen_edges = set()
         for n in sorted(goal_nodes, key=lambda n: (n.rank, n)):
+            if n is self.root:
+                continue
             path = paths[n]
             seen_path = [p for p in path if p in seen_edges]
             if seen_path:
@@ -2634,7 +2752,7 @@ class Graph(RollbackMixin):
                     assert self.root_reachable_from >= self.reachable_from_root
                     break
                 except DoorRouterException:
-                    assert self.unconnected
+                    pass
 
             if self.num_loops % 5 == 0:
                 if self.num_loops < 500:
@@ -2733,9 +2851,6 @@ class Graph(RollbackMixin):
                 print(f'Completed maze on attempt #{attempts} after '
                       f'{self.num_loops} operations and {round(t2-t1,1)} '
                       f'seconds.')
-                print('CHANGELOG')
-                print(self.get_pretty_changelog())
-                exit(0)
                 break
             except DoorRouterException as error:
                 print()

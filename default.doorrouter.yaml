@@ -6,7 +6,6 @@ time_limit:            300  # Seconds before giving up
 fg_cache_limit:      10000  # Max cache size for node guarantee simplification
 map_size:             1.00  # Percentage of all possible nodes to connect
 map_strictness:       0.95  # Lower bound portion of selected nodes to connect
-progression_speed:    0.00  # Rate to prioritize key nodes
 avoid_softlocks:      True  # Create a graph where you can't get stuck
 trap_doors:           0.00  # Rate to allow one-way trick doors
 skip_complex_nodes:   0.00  # Rate to skip nodes that are difficult to route

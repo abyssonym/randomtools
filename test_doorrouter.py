@@ -90,6 +90,8 @@ class Replay:
         self.progression = {}
         with open(filename) as f:
             for line in f:
+                if '#' in line:
+                    line = line.split('#')[0]
                 line = line.strip()
                 if not line:
                     continue
@@ -1244,7 +1246,7 @@ def test_graph_reduction07():
 def test_graph_reduction08():
     g = get_graph()
     g.reduce = False
-    g.by_label('c').add_guarantee(g.by_label('b'))
+    g.by_label('c').add_guarantee(frozenset({g.by_label('b')}))
     g.add_edge('root', 'a', directed=False)
     g.add_edge('a', 'b', directed=False)
     g.add_edge('a', 'c', directed=False)
@@ -1256,7 +1258,7 @@ def test_graph_reduction08():
 def test_graph_reduction09():
     g = get_graph()
     g.reduce = True
-    g.by_label('c').add_guarantee(g.by_label('b'))
+    g.by_label('c').add_guarantee(frozenset({g.by_label('b')}))
     g.add_edge('root', 'a', directed=False)
     g.add_edge('a', 'b', directed=False)
     g.add_edge('a', 'c', directed=False)
@@ -2225,41 +2227,159 @@ def test_rerank3():
 
     assert ranks1 == ranks2
 
-def test_custom_replay(filename='test_replay.txt', midpoint=None):
-    try:
-        rep1 = Replay(filename, root='1d1-001')
-        lastpoint = max(rep1.progression)
-        #print('ROOTING 1')
-        rep1.advance_to(lastpoint, ignore_commits=True)
-        rep1.graph.rooted
-        #print('ROOTED 1')
+def test_rerank4():
+    g = get_graph()
+    g.reduce = True
+    g.add_edge('root', 'a')
+    g.add_edge('a', 'b')
+    g.add_edge('root', 'b', condition='x', directed=False)
+    g.add_edge('c', 'x', directed=False)
+    g.clear_rooted_cache()
+    g.rooted
+    g.commit()
+    g.add_edge('p', 'q')
+    g.clear_rooted_cache()
+    g.rooted
+    g.commit()
+    g.add_edge('b', 'x', directed=False)
+    g.clear_rooted_cache()
+    g.rooted
+    ranks1 = {(n.label, n.rank) for n in g.rooted}
 
-        rep2 = Replay(filename, root='1d1-001')
-        #print('ROOTING 2 PT1')
-        rep2.advance_to(midpoint, ignore_commits=True)
-        #print('ROOTING 2 PT2')
-        rep2.advance_to(lastpoint, ignore_commits=False)
-        rep2.graph.rooted
-        #print('ROOTED 2')
+    g = get_graph()
+    g.reduce = True
+    g.add_edge('root', 'a')
+    g.add_edge('a', 'b')
+    g.add_edge('root', 'b', condition='x', directed=False)
+    g.add_edge('c', 'x', directed=False)
+    g.clear_rooted_cache()
+    g.rooted
+    #g.commit()
+    g.add_edge('p', 'q')
+    g.clear_rooted_cache()
+    g.rooted
+    #g.commit()
+    g.add_edge('b', 'x', directed=False)
+    g.clear_rooted_cache()
+    g.rooted
+    ranks2 = {(n.label, n.rank) for n in g.rooted}
 
-        g1 = rep1.graph
-        g2 = rep2.graph
-        #n1 = g1.by_label('02f-003')
-        #n2 = g2.by_label('02f-003')
-        ranks1 = {(n.label, n.rank) for n in g1.rooted}
-        ranks2 = {(n.label, n.rank) for n in g2.rooted}
-    except:
-        return
     assert ranks1 == ranks2
 
+def test_rerank5():
+    g1 = get_graph()
+    g1.reduce = True
+    g1.add_edge('root', 'x')
+    g1.add_edge('x', 'a')
+    g1.add_edge('a', 'b')
+    g1.add_edge('b', 'root')
+    g1.add_edge('root', 'y', condition='x', directed=False)
+    g1.add_edge('x', 'z', condition='y')
+    g1.clear_rooted_cache()
+    g1.rooted
+    #g1.commit()
+    g1.add_edge('x', 'root')
+    g1.clear_rooted_cache()
+    g1.rooted
+    ranks1 = {(n.label, n.rank) for n in g1.rooted}
+
+    g2 = get_graph()
+    g2.reduce = True
+    g2.add_edge('root', 'x')
+    g2.add_edge('x', 'a')
+    g2.add_edge('a', 'b')
+    g2.add_edge('b', 'root')
+    g2.add_edge('root', 'y', condition='x', directed=False)
+    g2.add_edge('x', 'z', condition='y')
+    g2.clear_rooted_cache()
+    g2.rooted
+    g2.commit()
+    g2.add_edge('x', 'root')
+    g2.clear_rooted_cache()
+    g2.rooted
+    ranks2 = {(n.label, n.rank) for n in g2.rooted}
+
+    assert g2.by_label('a') not in g2.by_label('z').guaranteed
+    assert g2.by_label('b') not in g2.by_label('z').guaranteed
+    assert ranks1 == ranks2
+
+def test_rerank6():
+    g1 = get_graph()
+    g1.reduce = True
+    g1.add_edge('root', 'x')
+    g1.add_edge('x', 'a')
+    g1.add_edge('a', 'b')
+    g1.add_edge('b', 'root')
+    g1.add_edge('root', 'y', condition='x')
+    g1.add_edge('y', 'root')
+    g1.add_edge('root', 'z', condition='y')
+    g1.clear_rooted_cache()
+    g1.rooted
+    #g1.commit()
+    g1.add_edge('x', 'root')
+    g1.clear_rooted_cache()
+    g1.rooted
+    ranks1 = {(n.label, n.rank) for n in g1.rooted}
+
+    g2 = get_graph()
+    g2.reduce = True
+    g2.add_edge('root', 'x')
+    g2.add_edge('x', 'a')
+    g2.add_edge('a', 'b')
+    g2.add_edge('b', 'root')
+    g2.add_edge('root', 'y', condition='x')
+    g2.add_edge('y', 'root')
+    g2.add_edge('root', 'z', condition='y')
+    g2.clear_rooted_cache()
+    g2.rooted
+    g2.commit()
+    g2.add_edge('x', 'root')
+    g2.clear_rooted_cache()
+    g2.rooted
+    ranks2 = {(n.label, n.rank) for n in g2.rooted}
+
+    assert g2.by_label('a') not in g2.by_label('z').guaranteed
+    assert g2.by_label('b') not in g2.by_label('z').guaranteed
+    assert ranks1 == ranks2
+
+def test_custom_replay(filename='test_replay.txt',
+                       midpoint=2650, root='1d1-001'):
+    try:
+        root = 'root'
+        midpoint = 2650
+        slowrep = Replay(filename, root=root)
+        slowrep.advance_to(midpoint, ignore_commits=True)
+        checkpoints = {i for i in slowrep.progression
+                       if i >= midpoint and 'COMMIT' in slowrep.progression[i]}
+        checkpoints.add(midpoint)
+    except:
+        return
+    for checkpoint in sorted(checkpoints):
+        try:
+            slowrep.advance_to(checkpoint, ignore_commits=False)
+            fastrep = Replay(filename, root=root)
+            fastrep.advance_to(checkpoint, ignore_commits=True)
+            slowranks = {(n.label, n.rank) for n in slowrep.graph.rooted}
+            fastranks = {(n.label, n.rank) for n in fastrep.graph.rooted}
+            #if slowranks != fastranks:
+            #    print(f'FAIL at line {checkpoint}: '
+            #          f'{slowrep.progression[checkpoint]}')
+        except:
+            return
+        assert slowranks == fastranks
+        #print(f'Checkpoint {checkpoint} CLEARED')
+
 def test_custom_replay_full(filename='test_replay.txt', midpoint=0):
+    midpoint = 0
     slowrep = Replay(filename, root='1d1-001')
     slowrep.advance_to(midpoint, ignore_commits=True)
     checkpoints = {i for i in slowrep.progression
                    if i >= midpoint and 'COMMIT' in slowrep.progression[i]}
     checkpoints.add(midpoint)
     for checkpoint in sorted(checkpoints):
+        print('ROOTING SLOWREP')
         slowrep.advance_to(checkpoint, ignore_commits=False)
+        print('ROOTING FASTREP')
         fastrep = Replay(filename, root='1d1-001')
         fastrep.advance_to(checkpoint, ignore_commits=True)
         slowranks = {(n.label, n.rank) for n in slowrep.graph.rooted}
@@ -2267,7 +2387,6 @@ def test_custom_replay_full(filename='test_replay.txt', midpoint=0):
         if slowranks != fastranks:
             print(f'FAIL at line {checkpoint}: '
                   f'{slowrep.progression[checkpoint]}')
-            import pdb; pdb.set_trace()
         assert slowranks == fastranks
         print(f'Checkpoint {checkpoint} CLEARED')
 
