@@ -541,8 +541,8 @@ def write_patch_line(outfile, address, code):
     outfile.write(code)
 
 
-def write_patch(outfile, patchfilename, noverify=None, force=False,
-                mapping=None, parameters=None):
+def write_patch(outfile, patchfilename, parameters=None, mapping=None,
+                noverify=None, force=False):
     if patchfilename in ALREADY_PATCHED and not force:
         return
     if noverify and patchfilename not in NOVERIFY_PATCHES:
