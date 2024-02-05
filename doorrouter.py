@@ -2729,9 +2729,11 @@ class Graph(RollbackMixin):
         assert self.root_reachable_from >= self.reachable_from_root
         edges = [e for e in self.all_edges if e.source.rooted]
         trap_doors = [e for e in edges if e.source is e.destination]
+        to_remove = set()
         for e in sorted(trap_doors):
             if DEBUG:
                 self.verify()
+            self.rooted
             rank = e.source.rank
             candidates = sorted([
                 n for n in self.connectable
@@ -2745,15 +2747,17 @@ class Graph(RollbackMixin):
             try:
                 new_edge = e.source.add_edge(new_destination,
                                              procedural=True)
-                log('TRAP', new_edge)
+                log(f'TRAP {new_edge}')
                 self.verify()
                 if self.reachable_from_root - self.root_reachable_from:
                     raise DoorRouterException(str(new_edge))
-                e.remove()
+                to_remove.add(e)
             except DoorRouterException:
                 new_edge.remove()
-        self.verify()
+        for e in to_remove:
+            e.remove()
         assert self.root_reachable_from >= self.reachable_from_root
+        self.verify()
 
     def generate_solutions(self, goal_nodes=None):
         print('Generating solution paths...')
