@@ -338,6 +338,8 @@ class Graph(RollbackMixin):
             self.edge_guar_to = {}
 
             self.commit()
+            self.random_sort_key = md5(
+                    f'{self.label}{self.parent.seed}'.encode('ascii')).digest()
 
         def __repr__(self):
             return self.label
@@ -536,6 +538,7 @@ class Graph(RollbackMixin):
         def add_edges(self, other, conditions, procedural=False,
                       simplify=True, update_caches=True,
                       force_return_edges=False):
+            assert conditions
             edges = set()
             for condition in sorted(conditions, key=lambda c: sorted(c)):
                 e = self.add_edge(other, condition, procedural=procedural,
@@ -544,6 +547,7 @@ class Graph(RollbackMixin):
             if simplify:
                 self.simplify_edges()
             if force_return_edges:
+                assert edges
                 return edges
             return self.edges & edges
 
@@ -571,6 +575,8 @@ class Graph(RollbackMixin):
                 else:
                     temp.add(n)
             nodeset = temp
+            if nodeset <= {self.parent.root, self}:
+                return
             assert all(isinstance(n, Graph.Node) for n in nodeset)
             if self.parent.config['lazy_complex_nodes']:
                 for n in nodeset:
@@ -1558,7 +1564,7 @@ class Graph(RollbackMixin):
                         definition_label in self.definition_overrides:
                     requirements = self.definition_overrides[definition_label]
                 self.definitions[definition_label] = \
-                        self.expand_requirements(requirements)
+                        frozenset(self.expand_requirements(requirements))
                 continue
 
             if line.startswith('.start'):
@@ -1567,7 +1573,7 @@ class Graph(RollbackMixin):
                     temp = self.definitions[root_label]
                     assert len(temp) == 1
                     assert isinstance(list(temp)[0], frozenset)
-                    root_label, = temp.pop()
+                    (root_label,), = temp
                 self.set_root(self.get_by_label(root_label))
                 continue
 
@@ -1636,7 +1642,8 @@ class Graph(RollbackMixin):
                 for blabel, conditions in self.preset_connections[alabel]:
                     b = self.get_by_label(blabel)
                     if self.config['skip_complex_nodes'] >= 1 and (
-                            a.guarantee_nodes or b.guarantee_nodes):
+                            a.guarantee_nodesets or b.guarantee_nodesets
+                            or a.force_bridge or b.force_bridge):
                         print(f'Warning: Fixed exit {a} -> {b} violates '
                               f'complex node policy. Removing this exit.')
                         self.unconnected |= {a, b}
@@ -1652,20 +1659,38 @@ class Graph(RollbackMixin):
         reduced = self.necessary_nodes & self.unconnected
         too_complex = set()
         for n in sorted(self.unconnected):
-            if (not n.guarantee_nodesets) or \
-                    random.random() > self.config['skip_complex_nodes']:
+            if not (n.guarantee_nodesets or n.force_bridge):
                 continue
-            else:
-                too_complex.add(n)
+            if random.random() > self.config['skip_complex_nodes']:
+                continue
+            too_complex.add(n)
 
         while True:
+            old = set(too_complex)
+            for n in old:
+                for e in n.reverse_edges:
+                    too_complex.add(e.source)
+            if too_complex == old:
+                break
+
+        too_complex -= self.necessary_nodes
+        necessary = set(self.necessary_nodes)
+        while True:
+            old = set(necessary)
+            for n in old:
+                for e in n.reverse_edges:
+                    necessary.add(e.source)
+            if necessary == old:
+                break
+        too_complex -= necessary
+
+        reduced = necessary & self.unconnected
+        while True:
+            assert not reduced & too_complex
             candidates = sorted(self.unconnected - (too_complex | reduced))
             if not candidates:
                 break
             chosen = random.choice(candidates)
-            if chosen.guarantee_nodesets and random.random() \
-                    > self.config['map_size'] * self.config['map_strictness']:
-                continue
             backup_reduced = set(reduced)
             reduced.add(chosen)
             while True:
@@ -1684,14 +1709,26 @@ class Graph(RollbackMixin):
             if len(reduced & self.unconnected) >= num_nodes:
                 break
 
+        assert not reduced & too_complex
+        while True:
+            for n in reduced:
+                neighbors = {e.destination for e in n.edges} & self.connectable
+                if neighbors - reduced:
+                    reduced |= neighbors
+                    break
+            else:
+                break
         for n in reduced:
             assert n.required_nodes <= reduced
+
+        self.allow_connecting = reduced & self.connectable
         assert self.necessary_nodes & self.unconnected == \
                 self.necessary_nodes & reduced & self.unconnected
         self.unconnected = reduced & self.unconnected
         self.initial_unconnected = set(self.unconnected)
 
-        assert self.unconnected <= self.connectable <= self.nodes
+        assert self.unconnected <= self.allow_connecting <= \
+                self.connectable <= self.nodes
         del(self._property_cache)
         self.verify()
         self.commit()
@@ -1988,6 +2025,7 @@ class Graph(RollbackMixin):
                 {expand(fg) for fg in n.full_guaranteed})
 
     def expand_requirements(self, requirements):
+        original = str(requirements)
         assert isinstance(requirements, str)
         if requirements.startswith('suggest:'):
             return frozenset(set())
@@ -1999,6 +2037,9 @@ class Graph(RollbackMixin):
             while len(requirements) >= 2:
                 a = requirements[0]
                 b = requirements[1]
+                if not a and b:
+                    raise Exception(f'Condition {original} failed '
+                                    f'because one side is null.')
                 requirements = requirements[2:]
                 r = set()
                 for aa in a:
@@ -2014,7 +2055,7 @@ class Graph(RollbackMixin):
             for r in requirements:
                 if r in self.definitions:
                     defined = self.definitions[r]
-                    assert isinstance(defined, set)
+                    assert isinstance(defined, frozenset)
                     for r in defined:
                         assert isinstance(r, frozenset)
                         result.add(r)
@@ -2474,7 +2515,8 @@ class Graph(RollbackMixin):
             return
         if self.num_loops < 0:
             return
-        if self.goal_reached and not self.unconnected:
+        if self.goal_reached and \
+                self.reachable_from_root <= self.root_reachable_from:
             return
         self.get_no_return_nodes(allow_nodes=self.get_add_edge_options())
 
@@ -2533,6 +2575,22 @@ class Graph(RollbackMixin):
                 raise error
         self.verify_no_return()
 
+    def verify_goal_connectable(self):
+        for g in self.goal_nodes:
+            reachable_from = {g}
+            while True:
+                updated = False
+                if reachable_from & (self.unconnected | {self.root}):
+                    node_passed = True
+                    break
+                for n in set(reachable_from):
+                    for e in n.reverse_edges:
+                        if e.true_condition <= self.allow_connecting:
+                            reachable_from.add(e.source)
+                            updated = True
+                if not updated:
+                    raise Exception(f'Cannot connect required node {g}.')
+
     def get_enemy_nodes(self, test=False):
         enemy_nodes = defaultdict(set)
         for n in self.nodes:
@@ -2564,7 +2622,7 @@ class Graph(RollbackMixin):
             a = self.get_by_label(a)
         if isinstance(b, str):
             b = self.get_by_label(b)
-        if condition is None or condition == '':
+        if not condition:
             conditions = {frozenset()}
         elif isinstance(condition, frozenset):
             conditions = {condition}
@@ -2581,19 +2639,21 @@ class Graph(RollbackMixin):
                     a, conditions, procedural=procedural,
                     simplify=simplify, update_caches=update_caches,
                     force_return_edges=force_return_edges)
+        if force_return_edges:
+            assert edges
         return edges
 
     def procedural_add_edge(self, strict_candidates, lenient_candidates):
         options = self.get_add_edge_options()
 
         enemy_nodes = self.get_enemy_nodes()
+        enemy_nodes = set()
 
-        temp = max(options,
-                   key=lambda o: len(self.discourage_nodes[o]))
-        temp = len(self.discourage_nodes[temp])
-        options = [o for o in options
-                   if len(self.discourage_nodes[o]) == temp]
-        a = random.choice(sorted(options))
+        options = sorted(options, key=lambda o: (
+            len(self.discourage_nodes[o]), o.random_sort_key, o))
+        max_index = len(options)-1
+        index = random.randint(random.randint(0, max_index), max_index)
+        a = options[index]
         others = set(n for n in self.unconnected
                      if n.twoway_conditions == a.twoway_conditions)
 
@@ -2626,11 +2686,15 @@ class Graph(RollbackMixin):
         else:
             b = a
 
+        #if {a, b} == self.previous_procedural_add_edge:
+        #    return None
         self.add_edge(a, b, directed=False, procedural=True, simplify=False)
         self.discourage_nodes[a].add(b)
         self.discourage_nodes[b].add(a)
         self.unconnected -= {a, b}
         log(f'ADD {a} {b}')
+        self.previous_procedural_add_edge = {a, b}
+        return self.previous_procedural_add_edge
 
     def procedural_remove_edge(self):
         all_edges = {e for e in self.all_edges if e.generated}
@@ -2655,6 +2719,7 @@ class Graph(RollbackMixin):
         e.bidirectional_remove()
         self.unconnected |= {a, b}
         log(f'REMOVE {a} {b}')
+        self.previous_procedural_add_edge = None
 
     def handle_trap_doors(self):
         if self.config['trap_doors'] <= 0:
@@ -2761,6 +2826,9 @@ class Graph(RollbackMixin):
 
         self.discourage_nodes = defaultdict(set)
         self.discourage_edges = set()
+        self.previous_procedural_add_edge = None
+
+        self.verify_goal_connectable()
 
         failures = 0
         start_time = time()
