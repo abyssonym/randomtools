@@ -96,7 +96,7 @@ class Graph(RollbackMixin):
                 graph = self.source.parent
 
                 self.true_condition = set()
-                self.false_condition = set()
+                self.false_condition = frozenset()
                 if condition:
                     if all(isinstance(l, str) for l in condition):
                         for l in condition:
@@ -114,18 +114,23 @@ class Graph(RollbackMixin):
                                 node = graph.get_by_label(l)
                                 self.true_condition.add(node)
                             assert node is not None
-                        self.true_condition = frozenset(self.true_condition)
                         self.false_condition = frozenset(self.false_condition)
                     else:
-                        self.true_condition = frozenset(condition)
+                        self.true_condition = set(condition)
                     graph.conditional_nodes |= self.combined_conditions
                     for n in self.combined_conditions:
                         if not n.is_condition:
                             del(n._property_cache['is_condition'])
                     if self.true_condition:
+                        self.true_condition = frozenset(
+                                self.true_condition - {
+                                    self.source, self.source.parent.root})
                         self.source.parent.conditions.add(self.true_condition)
                     if self.false_condition:
                         self.source.parent.conditions.add(self.false_condition)
+                self.true_condition = frozenset(self.true_condition)
+                if self.false_condition:
+                    raise NotImplementedError
                 assert self.__hash__() == self.signature.__hash__()
 
                 self.enabled = True
