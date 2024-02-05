@@ -184,6 +184,9 @@ class Graph(RollbackMixin):
             @property
             def rank(self):
                 if self.source.rank is not None:
+                    if self.true_condition:
+                        return max(self.source.rank,
+                                   max(n.rank for n in self.true_condition))
                     return self.source.rank
                 return -1
 
@@ -1651,7 +1654,7 @@ class Graph(RollbackMixin):
                 too_complex.add(n)
 
         while True:
-            candidates = sorted(self.unconnected - (too_complex| reduced))
+            candidates = sorted(self.unconnected - (too_complex | reduced))
             if not candidates:
                 break
             chosen = random.choice(candidates)
@@ -2072,6 +2075,11 @@ class Graph(RollbackMixin):
             assert ranked != preranked
             preranked = set(ranked)
             for n in to_rank:
+                reverse_edges = {e for e in n.reverse_edges
+                                 if e.source in preranked
+                                 and e.true_condition <= preranked}
+                if n is not self.root and not reverse_edges:
+                    continue
                 for g in n.full_guaranteed:
                     preguaranteed = (n.guaranteed | g) - {n}
                     if preguaranteed <= preranked:
@@ -2689,9 +2697,10 @@ class Graph(RollbackMixin):
             for n in sorted(goal_nodes, key=lambda n: n.rank):
                 if n in paths:
                     continue
-                paths[n] = n.get_shortest_path(avoid_nodes=frozenset({
-                    a for a in self.nodes
-                    if a.rank is not None and a.rank > n.rank}))
+                avoid_nodes = frozenset({a for a in self.nodes if
+                                         a.rank is not None and
+                                         a.rank >= n.rank} - {n})
+                paths[n] = n.get_shortest_path(avoid_nodes=avoid_nodes)
                 assert paths[n] is not None
                 for e in paths[n]:
                     for c in e.true_condition:

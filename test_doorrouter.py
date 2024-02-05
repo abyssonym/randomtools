@@ -2342,6 +2342,22 @@ def test_rerank6():
     assert g2.by_label('b') not in g2.by_label('z').guaranteed
     assert ranks1 == ranks2
 
+def test_edge_rank1():
+    g = get_graph()
+    g.reduce = True
+    g.add_edge('root', 'a')
+    g.add_edge('root', 'x', directed=False)
+    g.add_edge('root', 'b', condition='x')
+    g.add_edge('a', 'b')
+    g.rooted
+    b = g.by_label('b')
+    e = [e1 for e1 in g.all_edges if 'root->b' in str(e1)][0]
+    assert g.by_label('x').rank > g.by_label('root').rank
+    assert g.by_label('x').rank == g.by_label('a').rank
+    assert e.rank == g.by_label('x').rank
+    assert b.rank > g.by_label('a').rank
+    assert b.rank > g.by_label('x').rank
+
 def test_custom_replay(filename='test_replay.txt',
                        midpoint=2650, root='1d1-001'):
     try:
