@@ -785,3 +785,89 @@ class SnesGfxManager:
         for t in tiles:
             data += SnesGfxManager.interleave_tile(t)
         return data
+
+
+class fake_yaml:
+    SafeLoader = None
+
+    def verify_result(text, data):
+        import yaml
+        assert yaml.safe_load(text) == data
+
+    def load(text, Loader=None, test=False):
+        try:
+            if test:
+                raise ImportError
+            import yaml
+            if Loader is not None:
+                return yaml.load(text, Loader=Loader)
+            return yaml.safe_load(text)
+        except ImportError:
+            pass
+
+        import json
+
+        def format_key(key):
+            if key.startswith('0x'):
+                try:
+                    return int(key[2:], 0x10)
+                except ValueError:
+                    pass
+            try:
+                return int(key)
+            except ValueError:
+                pass
+            return key
+
+        def format_value(value):
+            value = format_key(value)
+            if isinstance(value, int):
+                return value
+            try:
+                return float(value)
+            except ValueError:
+                pass
+            if value.startswith('[') and value.endswith(']'):
+                return json.loads(value)
+            if value.lower() in ('yes', 'true'):
+                return True
+            if value.lower() in ('no', 'false'):
+                return False
+            return value
+
+        data = {}
+        nested = [(-1, data)]
+        for line in text.splitlines():
+            if '#' in line:
+                line, _ = line.split('#', 1)
+            line = line.rstrip()
+            if not line:
+                continue
+            test = line.lstrip()
+            indentation = len(line) - len(test)
+            assert ':' in line
+            key, value = line.split(':', 1)
+            key = key.strip()
+            value = value.strip()
+            while True:
+                (a, b) = nested[-1]
+                if a >= indentation:
+                    nested = nested[:-1]
+                else:
+                    break
+
+            _, subnested = nested[-1]
+            if value:
+                subnested[format_key(key)] = format_value(value)
+            else:
+                next_nested = {}
+                subnested[format_key(key)] = next_nested
+                nested.append((indentation, next_nested))
+
+        _, data = nested[0]
+        if test:
+            fake_yaml.verify_result(text, data)
+        return data
+
+    def safe_load(text, test=False):
+        return fake_yaml.load(text, test=test)

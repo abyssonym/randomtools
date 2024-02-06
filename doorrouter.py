@@ -8,7 +8,7 @@ from itertools import product
 from os import listdir, path
 from sys import stdout
 from time import time, sleep
-import yaml
+from .utils import fake_yaml as yaml
 
 
 DEBUG = False
@@ -1304,12 +1304,12 @@ class Graph(RollbackMixin):
             if filename is None:
                 filename = DEFAULT_CONFIG_FILENAME
             with open(filename) as f:
-                self.config = yaml.load(f.read(), Loader=yaml.SafeLoader)
+                self.config = yaml.safe_load(f.read())
             self.config['config_filename'] = filename
         else:
             self.config = config
         with open(DEFAULT_CONFIG_FILENAME) as f:
-            defaults = yaml.load(f.read(), Loader=yaml.SafeLoader)
+            defaults = yaml.load(f.read())
         for key in defaults:
             if key not in self.config:
                 self.config[key] = defaults[key]
