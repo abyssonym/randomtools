@@ -1345,6 +1345,8 @@ class Graph(RollbackMixin):
         s = ''
         s += 'Maze Generation Settings:\n'
         s += f'  seed:{"":15} {self.seed}\n'
+        if hasattr(self, 'attempts'):
+            s += f'  attempts:{"":11} {self.attempts}\n'
         for key, value in self.config.items():
             if key == 'seed':
                 continue
@@ -2942,6 +2944,7 @@ class Graph(RollbackMixin):
         attempts = 0
         while True:
             attempts += 1
+            self.attempts = attempts
             print(f'Maze generation attempt #{attempts}, seed {self.seed}...')
             print(f'Connecting {len(self.initial_unconnected)} nodes.')
             try:
