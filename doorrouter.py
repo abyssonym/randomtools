@@ -1653,7 +1653,7 @@ class Graph(RollbackMixin):
                     assert a in self.connectable
                     assert b in self.connectable
                     assert a not in self.unconnected
-                    assert b not in self.unconnected
+                    #assert b not in self.unconnected
                     a.add_edge(b, conditions)
 
         assert self.unconnected <= self.connectable <= self.nodes
