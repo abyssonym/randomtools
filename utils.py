@@ -794,9 +794,9 @@ class fake_yaml:
         import yaml
         assert yaml.safe_load(text) == data
 
-    def load(text, Loader=None, test=False):
+    def load(text, Loader=None, testing=False):
         try:
-            if test:
+            if testing:
                 raise ImportError
             import yaml
             if Loader is not None:
@@ -865,9 +865,9 @@ class fake_yaml:
                 nested.append((indentation, next_nested))
 
         _, data = nested[0]
-        if test:
+        if testing:
             fake_yaml.verify_result(text, data)
         return data
 
-    def safe_load(text, test=False):
-        return fake_yaml.load(text, test=test)
+    def safe_load(text, testing=False):
+        return fake_yaml.load(text, testing=testing)
