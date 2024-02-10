@@ -20,7 +20,7 @@ def get_graph(labels=None):
     assert g.reduce
     return g
 
-def load_test_data(filename, unconnected=None):
+def load_test_data(filename, root_label='1d1-001', unconnected=None):
     try:
         node_labels = set()
         edge_labels = set()
@@ -61,7 +61,7 @@ def load_test_data(filename, unconnected=None):
                         n = g.Node(line.strip(), g)
                     g.unconnected.add(n)
             g.initial_unconnected = frozenset(g.unconnected)
-        g.set_root(g.by_label('root'))
+        g.set_root(g.by_label(root_label))
         g.testing = False
     except AssertionError:
         raise Exception('Failure to load test data.')
@@ -2342,6 +2342,58 @@ def test_rerank6():
     assert g2.by_label('b') not in g2.by_label('z').guaranteed
     assert ranks1 == ranks2
 
+def test_rerank7():
+    g1 = get_graph(ascii_lowercase + ascii_uppercase)
+    g1.reduce = True
+    g1.add_edge('root', 'a')
+    g1.add_edge('a', 'b')
+    g1.add_edge('b', 'c')
+    g1.add_edge('c', 'x')
+    g1.add_edge('x', 'd', condition='x')
+    g1.add_edge('x', 'e', condition='x')
+    g1.add_edge('d', 'root')
+    g1.add_edge('e', 'q')
+    g1.add_edge('q', 'x')
+    g1.add_edge('q', 'f', condition='x')
+    g1.add_edge('root', 'q')
+    g1.clear_rooted_cache()
+    g1.rooted
+
+    g2 = get_graph(ascii_lowercase + ascii_uppercase)
+    g2.reduce = True
+    g2.add_edge('root', 'a')
+    g2.add_edge('a', 'b')
+    g2.add_edge('b', 'c')
+    g2.add_edge('c', 'x')
+    g2.add_edge('x', 'd', condition='x')
+    g2.add_edge('x', 'e', condition='x')
+    g2.add_edge('d', 'root')
+    g2.add_edge('e', 'q')
+    g2.add_edge('q', 'x')
+    g2.add_edge('q', 'f', condition='x')
+    g2.clear_rooted_cache()
+    g2.rooted
+    g2.commit()
+    g2.test_break = True
+    g2.add_edge('root', 'q')
+    g2.clear_rooted_cache()
+    g2.rooted
+
+    expected_ranks = [
+        ('root', 1),
+        ('q', 2),
+        ('x', 3),
+        ('f', 4),
+        ]
+    assert g1.by_label('a') not in g1.by_label('f').guaranteed
+    assert g2.by_label('a') not in g2.by_label('f').guaranteed
+    ranks1 = {(n.label, n.rank) for n in g1.rooted}
+    ranks2 = {(n.label, n.rank) for n in g2.rooted}
+    for label, rank in expected_ranks:
+        assert g1.by_label(label).rank == rank
+        assert g2.by_label(label).rank == rank
+    assert ranks1 == ranks2
+
 def test_edge_rank1():
     g = get_graph()
     g.reduce = True
@@ -2358,11 +2410,72 @@ def test_edge_rank1():
     assert b.rank > g.by_label('a').rank
     assert b.rank > g.by_label('x').rank
 
-def test_custom_replay(filename='test_replay.txt',
-                       midpoint=2650, root='1d1-001'):
+def test_required_nodes1():
+    g = get_graph()
+    g.reduce = True
+    g.add_edge('root', 'x')
+    g.add_edge('root', 'y')
+    g.add_edge('x', 'z')
+    g.add_edge('y', 'z')
+    g.add_edge('z', 'root')
+    g.by_label('x').required_nodes.add(g.by_label('z'))
+    g.by_label('y').required_nodes.add(g.by_label('z'))
     try:
-        root = 'root'
-        midpoint = 2650
+        g.rooted
+    except DoorRouterException:
+        return
+    assert False
+
+def test_required_nodes2():
+    g = get_graph()
+    g.reduce = True
+    g.add_edge('root', 'a')
+    g.add_edge('root', 'b', condition='a')
+    g.add_edge('a', 'x')
+    g.add_edge('x', 'y')
+    g.add_edge('a', 'b', condition='y')
+    g.add_edge('b', 'y')
+    g.add_edge('y', 'root')
+    g.by_label('x').required_nodes.add(g.by_label('y'))
+    try:
+        g.rooted
+    except DoorRouterException:
+        return
+    assert False
+
+def test_avoid_reachable1():
+    g = get_graph()
+    g.reduce = True
+    g.add_edge('root', 'a')
+    g.add_edge('a', 'q', directed=False)
+    g.add_edge('a', 'b', condition='q')
+    g.rooted
+    b = g.by_label('b')
+    assert b in g.rooted
+    assert b in g.root.get_naive_avoid_reachable()
+
+def test_avoid_reachable2():
+    g = get_graph()
+    g.reduce = True
+    g.add_edge('root', 'a')
+    g.add_edge('a', 'p', directed=False)
+    g.add_edge('a', 'q', directed=False)
+    g.add_edge('a', 'x', condition='p')
+    g.add_edge('x', 'y')
+    g.add_edge('x', 'z', condition='q')
+    g.add_edge('y', 'b')
+    g.rooted
+
+    edge = sorted(g.by_label('y').reverse_edges)[0]
+    assert edge.source.label == 'x'
+    orphans1 = edge.get_guaranteed_orphanable()
+    orphans2 = g.reachable_from_root - \
+            g.root.get_naive_avoid_reachable(avoid_edges={edge})
+    assert orphans1 == orphans2
+
+def test_custom_replay(filename='test_replay.txt',
+                       midpoint=0, root='1d1-001'):
+    try:
         slowrep = Replay(filename, root=root)
         slowrep.advance_to(midpoint, ignore_commits=True)
         checkpoints = {i for i in slowrep.progression
@@ -2386,7 +2499,6 @@ def test_custom_replay(filename='test_replay.txt',
         #print(f'Checkpoint {checkpoint} CLEARED')
 
 def test_custom_replay_full(filename='test_replay.txt', midpoint=0):
-    midpoint = 0
     slowrep = Replay(filename, root='1d1-001')
     slowrep.advance_to(midpoint, ignore_commits=True)
     checkpoints = {i for i in slowrep.progression
