@@ -75,6 +75,7 @@ class Graph(RollbackMixin):
             'guar_to', 'full_guar_to', 'strict_full_guar_to', 'edge_guar_to',
             '_free_travel_nodes', '_equivalent_nodes',
             '_free_travel_guaranteed', '_equivalent_guaranteed',
+            '_naive_avoid_cache',
             }
 
         @total_ordering
@@ -858,12 +859,39 @@ class Graph(RollbackMixin):
             else:
                 self.prereachable = {}
 
+            done_cascade = set()
+            def seek_cascade():
+                x = self
+                assert seek_nodes is not None
+                for n in reachable_nodes - done_cascade:
+                    if not hasattr(n, 'prereachable'):
+                        continue
+                    if strict in n.prereachable:
+                        n_pre = n.prereachable[strict]
+                    elif True in n.prereachable:
+                        n_pre = n.prereachable[True]
+                    else:
+                        continue
+                    n_nodes, n_edges = n_pre
+                    seek_n = n_nodes & seek_nodes
+                    for sn in seek_n:
+                        guar_to[sn] = guar_to[n] | n.guar_to[sn]
+                    if seek_n:
+                        return seek_n
+                done_cascade.update(reachable_nodes)
+
+            cascade = None
             failed_pairs = set()
             updated = False
             counter = 0
             while True:
                 if seek_nodes and seek_nodes & reachable_nodes:
                     break
+
+                if seek_nodes:
+                    cascade = seek_cascade()
+                    if cascade:
+                        break
 
                 counter += 1
                 todo_nodes = reachable_nodes - done_reachable_nodes
@@ -949,6 +977,8 @@ class Graph(RollbackMixin):
                         self not in root.prereachable_from:
                     root.prereachable_from = frozenset(
                             root.prereachable_from | {self})
+            if seek_nodes and cascade:
+                return frozenset(reachable_nodes | cascade), done_edges
             return reachable_nodes, done_edges
 
         def get_root_reachable_from(self, reachable_from_root=None):
@@ -1107,6 +1137,7 @@ class Graph(RollbackMixin):
             else:
                 satisfaction = self.parent.conditional_nodes & \
                         extra_satisfaction
+            satisfaction -= avoid_nodes
 
             rfn, _, _ = self.get_guaranteed_reachable()
             if other not in rfn:
@@ -1162,33 +1193,51 @@ class Graph(RollbackMixin):
                 e, shortest = min(paths, key=lambda x: (len(x[1]), x))
                 return shortest + [e]
 
-            def long_then_short_recurse(n):
-                shortest = shortest_recurse(n)
-                if shortest is not None:
-                    return shortest
-                long_edges = {e for e in get_recurse_edges(n)
-                              if rank_dict[n] < rank_dict[e.source]}
-                paths = [(e, long_then_short_recurse(e)) for e in long_edges]
-                paths = [(e, p) for (e, p) in paths if p is not None]
-                if not paths:
-                    return None
-                e, shortest = min(paths, key=lambda x: (len(x[1]), x))
-                return shortest + [e]
-
             return shortest_recurse(other)
 
         def get_naive_avoid_reachable(
                 self, seek_nodes=None, avoid_nodes=None, avoid_edges=None,
                 extra_satisfaction=None, recurse_depth=0):
+            if not hasattr(self, '_naive_avoid_cache'):
+                self._naive_avoid_cache = {}
             MAX_RECURSE_DEPTH = 2
             if seek_nodes is None:
-                seek_nodes = set()
+                seek_nodes = frozenset()
             if avoid_nodes is None:
-                avoid_nodes = set()
+                avoid_nodes = frozenset()
             if avoid_edges is None:
-                avoid_edges = set()
+                avoid_edges = frozenset()
             if extra_satisfaction is None:
                 extra_satisfaction = set()
+
+            extra_satisfaction &= self.parent.conditional_nodes
+            seek_nodes = frozenset(seek_nodes)
+            avoid_nodes = frozenset(avoid_nodes)
+            avoid_edges = frozenset(avoid_edges)
+            original_extra = frozenset(extra_satisfaction)
+
+            cache_key = (avoid_nodes, avoid_edges, original_extra,
+                         recurse_depth, seek_nodes)
+            if cache_key in self._naive_avoid_cache:
+                return self._naive_avoid_cache[cache_key]
+            for other_key in self._naive_avoid_cache:
+                (other_nodes, other_edges, other_extra,
+                        other_recurse, other_seek) = other_key
+                if other_nodes == avoid_nodes and \
+                        other_edges == avoid_edges and \
+                        other_extra == original_extra and \
+                        other_recurse <= recurse_depth and \
+                        other_seek <= seek_nodes:
+                    return self._naive_avoid_cache[other_key]
+                if avoid_nodes - other_nodes:
+                    continue
+                if avoid_edges - other_edges:
+                    continue
+                if seek_nodes and \
+                        seek_nodes & self._naive_avoid_cache[other_key] and \
+                        other_extra <= original_extra:
+                    return seek_nodes & self._naive_avoid_cache[other_key]
+
             guar_to = {n: (self.guaranteed | n.guaranteed)
                        for n in self.parent.rooted}
             nodes = {self}
@@ -1235,6 +1284,8 @@ class Graph(RollbackMixin):
 
                 todo_edges = edges - (done_edges | avoid_edges)
                 for e in todo_edges:
+                    if e.destination in avoid_nodes:
+                        continue
                     guaranteed = guar_to[e.source]
                     if e.is_satisfied_by(guaranteed | extra_satisfaction
                                          | reachable_from[e.source]):
@@ -1244,6 +1295,7 @@ class Graph(RollbackMixin):
                     else:
                         want_nodes |= e.true_condition
 
+            self._naive_avoid_cache[cache_key] = nodes
             return nodes
 
         def verify_required(self):
@@ -1972,7 +2024,8 @@ class Graph(RollbackMixin):
         for node in self.nodes:
             for attr in ('_rooted', 'prereachable', 'prereachable_from',
                          '_free_travel_nodes', '_equivalent_nodes',
-                         '_free_travel_guaranteed', '_equivalent_guaranteed'):
+                         '_free_travel_guaranteed', '_equivalent_guaranteed',
+                         '_naive_avoid_cache'):
                 if hasattr(node, attr):
                     delattr(node, attr)
         self.clear_node_guarantees()
