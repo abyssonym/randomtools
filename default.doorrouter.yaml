@@ -10,3 +10,4 @@ avoid_softlocks:      True  # Create a graph where you can't get stuck
 trap_doors:           0.00  # Rate to allow one-way trick doors
 skip_complex_nodes:   0.00  # Rate to skip nodes that are difficult to route
 lazy_complex_nodes:   False # Simplify complex nodes (softlock potential)
+goal_based_missables: False # Missable nodes only relevant if required by goal

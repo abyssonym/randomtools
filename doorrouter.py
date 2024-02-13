@@ -333,6 +333,7 @@ class Graph(RollbackMixin):
 
             self.required_nodes = set()
             self.guarantee_nodesets = set()
+            self.missable_nodesets = set()
             self.twoway_conditions = set()
             self.orphanless = False
 
@@ -570,7 +571,7 @@ class Graph(RollbackMixin):
                         edge2.destination.reverse_edges.remove(edge2)
                         self.parent.all_edges.remove(edge2)
 
-        def add_guarantee(self, nodeset):
+        def add_nodeset(self, nodeset, required_too):
             assert isinstance(nodeset, frozenset)
             temp = set()
             for n in nodeset:
@@ -580,16 +581,27 @@ class Graph(RollbackMixin):
                     temp.add(n)
             nodeset = temp
             if nodeset <= {self.parent.root, self}:
-                return
+                return False
             assert all(isinstance(n, Graph.Node) for n in nodeset)
             if self.parent.config['lazy_complex_nodes']:
-                for n in nodeset:
-                    self.required_nodes.add(n)
-                return
-            self.guarantee_nodesets.add(frozenset(nodeset))
+                if required_too:
+                    for n in nodeset:
+                        self.required_nodes.add(n)
+                return False
             for node in nodeset:
                 self.parent.guarantee_nodes.add(node)
                 self.local_conditional_nodes.add(node)
+            return nodeset
+
+        def add_guarantee(self, nodeset):
+            nodeset = self.add_nodeset(nodeset, required_too=True)
+            if nodeset:
+                self.guarantee_nodesets.add(frozenset(nodeset))
+
+        def add_missable(self, nodeset):
+            nodeset = self.add_nodeset(nodeset, required_too=False)
+            if nodeset:
+                self.missable_nodesets.add(frozenset(nodeset))
 
         def add_twoway_condition(self, condition):
             assert '!' not in condition
@@ -1350,6 +1362,32 @@ class Graph(RollbackMixin):
                     f'Node {self} reachable without guaranteed nodes.')
             return
 
+        def verify_missable(self):
+            if not self.missable_nodesets:
+                return
+            if not self.rooted:
+                return
+            if self.parent.config['goal_based_missables']:
+                rooted_goals = self.parent.goal_nodes & self.parent.rooted
+                if not rooted_goals:
+                    return
+                goals_guaranteed = self.parent.expand_guaranteed(rooted_goals)
+            else:
+                goals_guaranteed = self.parent.reachable_from_root
+            for nodeset in self.missable_nodesets:
+                if not (nodeset <= goals_guaranteed):
+                    continue
+                if self.parent.config['lazy_complex_nodes']:
+                    for n in nodeset:
+                        if n.rank > self.rank:
+                            raise DoorRouterException(
+                                f'Node {self} reachable without '
+                                f'missable nodes.')
+                    continue
+                if not (nodeset <= self.guaranteed):
+                    raise DoorRouterException(
+                        f'Node {self} reachable without missable nodes.')
+
         def verify_orphanless(self):
             if not self.orphanless:
                 return
@@ -1370,6 +1408,7 @@ class Graph(RollbackMixin):
             self.verify_required()
             self.verify_bridge()
             self.verify_guarantee()
+            self.verify_missable()
             self.verify_orphanless()
 
     def __init__(self, filename=None, config=None, preset_connections=None,
@@ -1685,6 +1724,14 @@ class Graph(RollbackMixin):
                     node.add_guarantee(req)
                 continue
 
+            if line.startswith('.missable'):
+                _, node_label, requirements = line.split(' ')
+                node = self.get_by_label(node_label)
+                requirements = self.expand_requirements(requirements)
+                for req in requirements:
+                    node.add_missable(req)
+                continue
+
             if line.startswith('.unreachable'):
                 _, node_label = line.split(' ')
                 node = self.get_by_label(node_label)
@@ -1728,6 +1775,7 @@ class Graph(RollbackMixin):
                     b = self.get_by_label(blabel)
                     if self.config['skip_complex_nodes'] >= 1 and (
                             a.guarantee_nodesets or b.guarantee_nodesets
+                            or a.missable_nodesets or b.missable_nodesets
                             or a.force_bridge or b.force_bridge
                             or a.required_nodes or b.required_nodes
                             or a.orphanless or b.orphanless):
@@ -1746,8 +1794,8 @@ class Graph(RollbackMixin):
         reduced = self.necessary_nodes & self.unconnected
         too_complex = set()
         for n in sorted(self.unconnected):
-            if not (n.guarantee_nodesets or n.force_bridge
-                    or n.required_nodes or n.orphanless):
+            if not (n.guarantee_nodesets or n.missable_nodesets or
+                    n.force_bridge or n.required_nodes or n.orphanless):
                 continue
             if random.random() > self.config['skip_complex_nodes']:
                 continue
