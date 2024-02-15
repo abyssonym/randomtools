@@ -829,6 +829,9 @@ class Graph(RollbackMixin):
                 if old_guaranteed != (guar_to[e.destination],
                                       full_guar_to[e.destination],
                                       self.edge_guar_to[e.destination]):
+                    if e.destination.is_condition:
+                        edges |= {e2 for e2 in valid_edges
+                                  if e.destination in e2.true_condition}
                     edges |= (e.destination.edges & valid_edges)
                     if self is root:
                         e.destination.guar_to[e.destination] = \

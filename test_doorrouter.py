@@ -61,7 +61,11 @@ def load_test_data(filename, root_label='1d1-001', unconnected=None):
                         n = g.Node(line.strip(), g)
                     g.unconnected.add(n)
             g.initial_unconnected = frozenset(g.unconnected)
-        g.set_root(g.by_label(root_label))
+        root = g.by_label('root')
+        if root is not None:
+            g.set_root(root)
+        else:
+            g.set_root(g.by_label(root_label))
         g.testing = False
     except AssertionError:
         raise Exception('Failure to load test data.')
@@ -1730,6 +1734,19 @@ def test_orphanable6():
         assert False
     except DoorRouterException:
         pass
+
+def test_orphanable7():
+    g = get_graph()
+    g.reduce = False
+    g.add_edge('root', 'a', directed=False)
+    g.add_edge('root', 'x', directed=False)
+    g.add_edge('root', 'x', condition='a')
+    g.add_edge('root', 'b', condition='x')
+    g.rooted
+    edge = {e for e in g.all_edges if 'root->x' in str(e)
+            and not e.true_condition}.pop()
+    assert edge not in g.by_label('b').guaranteed_edges
+    assert not edge.get_guaranteed_orphanable()
 
 def test_orphanable_backtracking1():
     g = get_graph()
