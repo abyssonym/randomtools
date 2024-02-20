@@ -84,7 +84,7 @@ class Graph(RollbackMixin):
             GLOBAL_SORT_INDEX = 0
 
             def __init__(self, source, destination, condition, procedural,
-                         update_caches):
+                         update_caches, questionable=False):
                 assert isinstance(source, Graph.Node)
                 assert isinstance(destination, Graph.Node)
                 assert isinstance(condition, frozenset)
@@ -94,6 +94,7 @@ class Graph(RollbackMixin):
                 self.source = source
                 self.destination = destination
                 self.generated = procedural
+                self.questionable = questionable
                 graph = self.source.parent
 
                 self.true_condition = set()
@@ -179,11 +180,12 @@ class Graph(RollbackMixin):
 
             @property
             def signature(self):
+                questionable = '?' if self.questionable else ''
                 if not self.false_condition:
-                    s = (f'{self.source}->{self.destination}: '
+                    s = (f'{self.source}->{self.destination}{questionable}: '
                          f'{sorted(self.true_condition)}')
                 else:
-                    s = (f'{self.source}->{self.destination}: '
+                    s = (f'{self.source}->{self.destination}{questionable}: '
                          f'{sorted(self.true_condition)} '
                          f'!{sorted(self.false_condition)}')
                 if self.generated:
@@ -526,14 +528,15 @@ class Graph(RollbackMixin):
             return self.get_by_label(label)
 
         def add_edge(self, other, condition=None, procedural=False,
-                     update_caches=True):
+                     update_caches=True, questionable=False):
             if condition is None:
                 condition = frozenset(set())
             else:
                 assert isinstance(condition, frozenset)
 
             edge = self.Edge(self, other, condition, procedural=procedural,
-                             update_caches=update_caches)
+                             update_caches=update_caches,
+                             questionable=questionable)
             for e in self.edges:
                 if edge == e and edge is not e:
                     edge = e
@@ -542,12 +545,13 @@ class Graph(RollbackMixin):
 
         def add_edges(self, other, conditions, procedural=False,
                       simplify=True, update_caches=True,
-                      force_return_edges=False):
+                      force_return_edges=False, questionable=False):
             assert conditions
             edges = set()
             for condition in sorted(conditions, key=lambda c: sorted(c)):
                 e = self.add_edge(other, condition, procedural=procedural,
-                                  update_caches=update_caches)
+                                  update_caches=update_caches,
+                                  questionable=questionable)
                 edges.add(e)
             if simplify:
                 self.simplify_edges()
@@ -566,7 +570,8 @@ class Graph(RollbackMixin):
                     if edge1.destination is not edge2.destination:
                         continue
                     if edge1.false_condition >= edge2.false_condition and \
-                            edge1.true_condition <= edge2.true_condition:
+                            edge1.true_condition <= edge2.true_condition and \
+                            edge1.questionable == edge2.questionable:
                         self.edges.remove(edge2)
                         edge2.destination.reverse_edges.remove(edge2)
                         self.parent.all_edges.remove(edge2)
@@ -913,7 +918,10 @@ class Graph(RollbackMixin):
                 if not (updated or todo_nodes):
                     break
                 for n in todo_nodes:
-                    edges |= n.edges
+                    if strict:
+                        edges |= {e for e in n.edges if not e.questionable}
+                    else:
+                        edges |= n.edges
                 done_reachable_nodes |= todo_nodes
 
                 updated = False
@@ -1020,7 +1028,8 @@ class Graph(RollbackMixin):
                 if not todo_nodes:
                     for n in reachable_from_root - reachable_from:
                         test_edges = {e for e in n.edges
-                                      if e.destination in reachable_from}
+                                      if e.destination in reachable_from
+                                      and not e.questionable}
                         if not test_edges:
                             continue
                         for fg in n.full_guaranteed:
@@ -1054,6 +1063,8 @@ class Graph(RollbackMixin):
 
                 todo_edges = edges - done_edges
                 for e in todo_edges:
+                    if e.questionable:
+                        continue
                     if e.source in reachable_from:
                         continue
                     guaranteed = e.source.guaranteed
@@ -2226,7 +2237,7 @@ class Graph(RollbackMixin):
             b.force_bridge.add(a)
         elif '>>' in edgestr:
             a, b = self.split_edgestr(edgestr, '>>')
-            a.add_edges(b, conditions)
+            edges = a.add_edges(b, conditions, questionable=True)
             a.required_nodes.add(b)
         elif '=' in edgestr:
             a, b = self.split_edgestr(edgestr, '=')
@@ -2422,7 +2433,8 @@ class Graph(RollbackMixin):
             new_edge = g.add_edge(a.label, b.label,
                                   condition=condition, simplify=True,
                                   update_caches=False,
-                                  force_return_edges=True)
+                                  force_return_edges=True,
+                                  questionable=e.questionable)
             assert len(new_edge) == 1
             new_edge = new_edge.pop()
             assert isinstance(new_edge, Graph.Node.Edge)
@@ -2451,6 +2463,8 @@ class Graph(RollbackMixin):
             condition = {g.node_mapping[n] for n in e1.true_condition}
             for e2 in g.reverse_edge_mapping:
                 if not (e2.true_condition <= condition):
+                    continue
+                if e1.questionable != e2.questionable:
                     continue
                 if e2.source is source and e2.destination is destination:
                     g.reverse_edge_mapping[e2].add(e1)
@@ -2764,7 +2778,7 @@ class Graph(RollbackMixin):
 
     def add_edge(self, a, b, condition=None, procedural=False,
                  directed=True, simplify=False, update_caches=True,
-                 force_return_edges=False):
+                 force_return_edges=False, questionable=False):
         if isinstance(a, str):
             a = self.get_by_label(a)
         if isinstance(b, str):
@@ -2780,12 +2794,14 @@ class Graph(RollbackMixin):
         edges = set()
         edges |= a.add_edges(b, conditions, procedural=procedural,
                              simplify=simplify, update_caches=update_caches,
-                             force_return_edges=force_return_edges)
+                             force_return_edges=force_return_edges,
+                             questionable=questionable)
         if not directed:
             edges |= b.add_edges(
                     a, conditions, procedural=procedural,
                     simplify=simplify, update_caches=update_caches,
-                    force_return_edges=force_return_edges)
+                    force_return_edges=force_return_edges,
+                    questionable=questionable)
         if force_return_edges:
             assert edges
         return edges

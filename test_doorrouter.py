@@ -2490,6 +2490,19 @@ def test_avoid_reachable2():
             g.root.get_naive_avoid_reachable(avoid_edges={edge})
     assert orphans1 == orphans2
 
+def test_one_time_edge():
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('root', 'b', directed=False)
+    g.add_edge('b', 'c', condition='a', directed=False)
+    g.add_multiedge('a>>b')
+    g.clear_rooted_cache()
+    g.rooted
+    assert len(g.reachable_from_root) == 4
+    assert g.by_label('a') not in g.root_reachable_from
+    assert len(g.root_reachable_from) == 3
+    g.verify()
+
 def test_custom_replay(filename='test_replay.txt',
                        midpoint=0, root='1d1-001'):
     try:
