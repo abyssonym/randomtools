@@ -1822,6 +1822,11 @@ class Graph(RollbackMixin):
                               f'complex node policy. Removing this exit.')
                         self.unconnected |= {a, b}
                         continue
+                    if not conditions:
+                        edges = {e for e in a.edges if e.destination is b
+                                 and not e.true_condition}
+                        if edges:
+                            continue
                     assert a in self.connectable
                     assert b in self.connectable
                     assert a not in self.unconnected
