@@ -102,6 +102,9 @@ class Graph(RollbackMixin):
                 if condition:
                     if all(isinstance(l, str) for l in condition):
                         for l in condition:
+                            if '`' in l:
+                                raise Exception(
+                                        'Names cannot contain backticks (`).')
                             if l.startswith('!'):
                                 requirements = \
                                     graph.expand_requirements(l[1:])
@@ -196,8 +199,11 @@ class Graph(RollbackMixin):
             def rank(self):
                 if self.source.rank is not None:
                     if self.true_condition:
-                        return max(self.source.rank,
-                                   max(n.rank for n in self.true_condition))
+                        try:
+                            return max(self.source.rank,
+                                       max(n.rank for n in self.true_condition))
+                        except TypeError:
+                            return -1
                     return self.source.rank
                 return -1
 
@@ -750,21 +756,40 @@ class Graph(RollbackMixin):
 
                 temp = edges - self.parent.conditional_edges
                 if temp:
-                    todo_edges = temp
-                elif self is root:
-                    todo_edges = {e for e in edges if
-                                  all(c.guaranteed is not None
-                                      for c in e.true_condition)}
-                else:
-                    todo_edges = edges
-
-                e = todo_edges.pop()
-                if edges is not todo_edges:
+                    e = temp.pop()
                     edges.remove(e)
+                elif self is root:
+                    for e in edges:
+                        if all(c.guaranteed is not None
+                               for c in e.true_condition):
+                            edges.remove(e)
+                            break
+                    else:
+                        raise Exception('No edges for propagation.')
+                else:
+                    e = edges.pop()
 
                 guaranteed = frozenset(
                         guar_to[e.source] | {e.destination} | e.true_condition)
                 gedges = self.edge_guar_to[e.source] | {e}
+
+                simplified = None
+                if e.destination in full_guar_to:
+                    full_guaranteed = full_guar_to[e.source]
+                    duaranteed = guar_to[e.destination]
+                    dedges = self.edge_guar_to[e.destination]
+                    dull_guaranteed = full_guar_to[e.destination]
+                    if guaranteed >= duaranteed and \
+                            gedges >= dedges:
+                        if full_guaranteed <= dull_guaranteed:
+                            done_edges.add(e)
+                            continue
+                        else:
+                            simplified = self.parent.simplify_full_guaranteed(
+                                    full_guaranteed | dull_guaranteed)
+                            if simplified <= dull_guaranteed:
+                                done_edges.add(e)
+                                continue
 
                 special_gedges, special_guaranteed = set(), set()
                 if self is root and e.true_condition:
@@ -1780,7 +1805,7 @@ class Graph(RollbackMixin):
 
             if len(conditions) == 0:
                 conditions = {frozenset()}
-            a, b = self.add_multiedge(edge, conditions)
+            self.add_multiedge(edge, conditions)
 
         if self.preset_connections is not None:
             for alabel in self.preset_connections:
@@ -1803,9 +1828,35 @@ class Graph(RollbackMixin):
                     #assert b not in self.unconnected
                     a.add_edge(b, conditions)
 
+        def mini_naive_reachable_from(node):
+            reachable = {node}
+            reachable_from = {node}
+            while True:
+                old = (set(reachable), set(reachable_from))
+                for n in reachable & reachable_from:
+                    for e in n.reverse_edges:
+                        if e.true_condition:
+                            continue
+                        reachable_from.add(e.source)
+                    for e in n.edges:
+                        if e.true_condition:
+                            continue
+                        reachable.add(e.destination)
+                if (reachable, reachable_from) == old:
+                    break
+            return reachable & reachable_from
+
+        necessary_nodes = set(self.goal_nodes)
+        while True:
+            old = set(necessary_nodes)
+            for n in old:
+                necessary_nodes |= mini_naive_reachable_from(n)
+            if necessary_nodes == old:
+                break
+
         assert self.unconnected <= self.connectable <= self.nodes
         num_nodes = int(round(self.config['map_size'] * len(self.unconnected)))
-        reduced = self.necessary_nodes & self.unconnected
+        reduced = necessary_nodes & self.unconnected
         too_complex = set()
         for n in sorted(self.unconnected):
             if not (n.guarantee_nodesets or n.missable_nodesets or
@@ -1823,18 +1874,18 @@ class Graph(RollbackMixin):
             if too_complex == old:
                 break
 
-        too_complex -= self.necessary_nodes
-        necessary = set(self.necessary_nodes)
-        while True:
-            old = set(necessary)
-            for n in old:
-                for e in n.reverse_edges:
-                    necessary.add(e.source)
-            if necessary == old:
-                break
-        too_complex -= necessary
+        too_complex -= necessary_nodes
 
-        reduced = necessary & self.unconnected
+        reduced = necessary_nodes & self.unconnected
+        for n in self.goal_nodes:
+            test = mini_naive_reachable_from(n)
+            if not test & reduced:
+                raise Exception(f'Node {n} has no access point.')
+        for n in reduced:
+            for e in n.edges:
+                if e.true_condition & too_complex:
+                    continue
+
         while True:
             assert not reduced & too_complex
             candidates = sorted(self.unconnected - (too_complex | reduced))
@@ -1846,9 +1897,13 @@ class Graph(RollbackMixin):
             while True:
                 old_reduced = set(reduced)
                 for n in old_reduced:
-                    reduced |= n.local_conditional_nodes
                     for e in n.edges:
+                        if e.true_condition & too_complex:
+                            continue
+                        if e.destination in too_complex:
+                            continue
                         reduced.add(e.destination)
+                        reduced |= e.true_condition
                     reduced |= n.required_nodes
                 if reduced == old_reduced:
                     break
@@ -1860,20 +1915,12 @@ class Graph(RollbackMixin):
                 break
 
         assert not reduced & too_complex
-        while True:
-            for n in reduced:
-                neighbors = {e.destination for e in n.edges} & self.connectable
-                if neighbors - reduced:
-                    reduced |= neighbors
-                    break
-            else:
-                break
         for n in reduced:
             assert n.required_nodes <= reduced
 
         self.allow_connecting = reduced & self.connectable
-        assert self.necessary_nodes & self.unconnected == \
-                self.necessary_nodes & reduced & self.unconnected
+        assert necessary_nodes & self.unconnected == \
+                necessary_nodes & reduced & self.unconnected
         self.unconnected = reduced & self.unconnected
         self.initial_unconnected = set(self.unconnected)
 
@@ -2023,24 +2070,6 @@ class Graph(RollbackMixin):
                 goal_nodes.add(n)
                 goal_nodes |= n.required_nodes
         return goal_nodes
-
-    @property
-    def necessary_nodes(self):
-        necessary = set(self.goal_nodes)
-        necessary.add(self.root)
-        while True:
-            old_necessary = set(necessary)
-            for n in old_necessary:
-                if n in self.unconnected:
-                    continue
-                for e in n.reverse_edges:
-                    necessary.add(e.source)
-                    necessary |= e.source.local_conditional_nodes
-                    if e.source in self.unconnected:
-                        continue
-            if necessary == old_necessary:
-                break
-        return necessary
 
     @property
     def interesting_nodes(self):
@@ -2220,37 +2249,79 @@ class Graph(RollbackMixin):
 
     def split_edgestr(self, edgestr, operator):
         a, b = edgestr.split(operator)
-        a = self.get_by_label(a)
-        b = self.get_by_label(b)
-        if a is None or b is None:
+        def handle_wildcard(n):
+            if '*' not in n:
+                if n in self.definitions:
+                    definition = self.definitions[n]
+                    if len(definition) != 1:
+                        raise Exception(
+                                f'{edgestr} contains incompatible definition.')
+                    definition = list(definition)[0]
+                    if len(definition) != 1:
+                        raise Exception(
+                                f'{edgestr} contains incompatible definition.')
+                    n = list(definition)[0]
+                result = self.by_label(n)
+                if result is None:
+                    return None
+                return {result}
+            if n.count('*') > 1:
+                raise Exception(
+                        f'{edgestr} contains multiple wildcard characters.')
+            prefix, suffix = n.split('*')
+            nodes = {n for n in self.nodes if n.label.startswith(prefix)
+                     and n.label.endswith(suffix)}
+            return nodes
+
+        aa = handle_wildcard(a)
+        bb = handle_wildcard(b)
+        if aa is None or bb is None or not (aa and bb):
             raise Exception(f'{edgestr} contains unknown node.')
-        return a, b
+        return aa, bb
 
     def add_multiedge(self, edgestr, conditions=None):
         if conditions is None:
             conditions = {frozenset()}
+        elif conditions:
+            for condition in list(conditions):
+                for c in condition:
+                    if isinstance(c, str) and '`NEVER`' in c:
+                        conditions.remove(condition)
+                        break
+            if not conditions:
+                return
         assert len(conditions) >= 1
-        if '=>' in edgestr:
-            a, b = self.split_edgestr(edgestr, '=>')
-            a.add_edges(b, conditions)
-            b.add_edges(a, conditions)
-            b.force_bridge.add(a)
-        elif '>>' in edgestr:
-            a, b = self.split_edgestr(edgestr, '>>')
-            edges = a.add_edges(b, conditions, questionable=True)
-            a.required_nodes.add(b)
-        elif '=' in edgestr:
-            a, b = self.split_edgestr(edgestr, '=')
-            if a is b:
-                a.add_twoway_condition(conditions)
-            else:
-                a.add_edges(b, conditions)
-                b.add_edges(a, conditions)
-        elif '>' in edgestr:
-            a, b = self.split_edgestr(edgestr, '>')
-            a.add_edges(b, conditions)
+        assert '`NEVER`' not in str(conditions)
+
+        for operator in ['=>', '>>', '=', '>']:
+            if operator not in edgestr:
+                continue
+            aa, bb = self.split_edgestr(edgestr, operator)
+            break
         else:
             raise Exception(f'Invalid multiedge: {edgestr}')
+
+        for a in sorted(aa):
+            for b in sorted(bb):
+                if operator =='=>':
+                    a.add_edges(b, conditions)
+                    b.add_edges(a, conditions)
+                    b.force_bridge.add(a)
+                elif operator == '>>':
+                    edges = a.add_edges(b, conditions, questionable=True)
+                    a.required_nodes.add(b)
+                elif operator == '=':
+                    if a is b and len(aa) == len(bb) == 1 \
+                            and '*' not in edgestr:
+                        a.add_twoway_condition(conditions)
+                    else:
+                        a.add_edges(b, conditions)
+                        b.add_edges(a, conditions)
+                elif operator == '>':
+                    a.add_edges(b, conditions)
+                else:
+                    raise Exception(f'Unhandled operator ({operator}).')
+
         return (a, b)
 
     def rerank(self):
