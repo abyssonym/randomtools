@@ -1879,12 +1879,20 @@ class Graph(RollbackMixin):
         reduced = necessary_nodes & self.unconnected
         for n in self.goal_nodes:
             test = mini_naive_reachable_from(n)
-            if not test & reduced:
-                raise Exception(f'Node {n} has no access point.')
-        for n in reduced:
-            for e in n.edges:
-                if e.true_condition & too_complex:
-                    continue
+            if test & reduced:
+                continue
+            reverse_nodes = {n}
+            while True:
+                if reverse_nodes & self.unconnected:
+                    break
+                old = set(reverse_nodes)
+                reverse_nodes |= {e.source for r in reverse_nodes
+                                  for e in r.reverse_edges}
+                if reverse_nodes == old:
+                    raise Exception(f'Node {n} has no access point.')
+            necessary_nodes |= reverse_nodes
+            reduced |= reverse_nodes
+            too_complex -= reverse_nodes
 
         while True:
             assert not reduced & too_complex
@@ -2818,8 +2826,9 @@ class Graph(RollbackMixin):
                 for n in set(reachable_from):
                     for e in n.reverse_edges:
                         if e.true_condition <= self.allow_connecting:
-                            reachable_from.add(e.source)
-                            updated = True
+                            if e.source not in reachable_from:
+                                reachable_from.add(e.source)
+                                updated = True
                 if not updated:
                     raise Exception(f'Cannot connect required node {g}.')
 
