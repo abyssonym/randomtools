@@ -524,6 +524,18 @@ class Graph(RollbackMixin):
             return self.equivalent_guaranteed
 
         @property
+        def connected_nodes(self):
+            nodes = {self}
+            while True:
+                old = set(nodes)
+                for n in old:
+                    nodes |= {e.destination for e in n.edges}
+                    nodes |= {e.source for e in n.reverse_edges}
+                if nodes == old:
+                    break
+            return nodes
+
+        @property
         def generated_edges(self):
             return {e for e in self.all_edges if e.generated}
 
@@ -1413,6 +1425,8 @@ class Graph(RollbackMixin):
                 goals_guaranteed = self.parent.expand_guaranteed(rooted_goals)
             else:
                 goals_guaranteed = self.parent.reachable_from_root
+            goals_guaranteed |= self.parent.goal_nodes
+
             for nodeset in self.missable_nodesets:
                 if not (nodeset <= goals_guaranteed):
                     continue
@@ -1851,11 +1865,36 @@ class Graph(RollbackMixin):
                     break
             return reachable & reachable_from
 
+        def mini_condition_reachable_from(node):
+            reachable_from = mini_naive_reachable_from(node)
+            reachable = set(reachable_from)
+            necessary = set()
+            while True:
+                if reachable & reachable_from & self.unconnected:
+                    break
+                old = set(reachable_from)
+                for n in old:
+                    for e in n.reverse_edges:
+                        if e.true_condition:
+                            necessary |= e.true_condition
+                        reachable_from.add(e.source)
+                for n in old:
+                    for e in n.edges:
+                        if e.true_condition <= necessary:
+                            reachable.add(e.destination)
+                if reachable_from == old:
+                    break
+            return reachable & reachable_from, necessary
+
         necessary_nodes = set(self.goal_nodes)
         while True:
             old = set(necessary_nodes)
             for n in old:
-                necessary_nodes |= mini_naive_reachable_from(n)
+                reachable = mini_naive_reachable_from(n)
+                if n in self.goal_nodes and not reachable & self.unconnected:
+                    more_reach, necessary = mini_condition_reachable_from(n)
+                    necessary_nodes |= more_reach | necessary
+                necessary_nodes |= reachable
             if necessary_nodes == old:
                 break
 
@@ -1886,18 +1925,10 @@ class Graph(RollbackMixin):
             test = mini_naive_reachable_from(n)
             if test & reduced:
                 continue
-            reverse_nodes = {n}
-            while True:
-                if reverse_nodes & self.unconnected:
-                    break
-                old = set(reverse_nodes)
-                reverse_nodes |= {e.source for r in reverse_nodes
-                                  for e in r.reverse_edges}
-                if reverse_nodes == old:
-                    raise Exception(f'Node {n} has no access point.')
-            necessary_nodes |= reverse_nodes
-            reduced |= reverse_nodes
-            too_complex -= reverse_nodes
+            more_test, _ = mini_condition_reachable_from(n)
+            if more_test & reduced:
+                continue
+            raise Exception(f'Node {n} has no access point.')
 
         while True:
             assert not reduced & too_complex
@@ -2082,6 +2113,9 @@ class Graph(RollbackMixin):
             for n in condition:
                 goal_nodes.add(n)
                 goal_nodes |= n.required_nodes
+                if n.guarantee_nodesets:
+                    guarantee = frozenset.intersection(*n.guarantee_nodesets)
+                    goal_nodes |= guarantee
         return goal_nodes
 
     @property
@@ -2905,6 +2939,42 @@ class Graph(RollbackMixin):
         others = set(n for n in self.unconnected
                      if n.twoway_conditions == a.twoway_conditions)
 
+        done_nodes = set()
+        if self.config['goal_based_missables']:
+            missable_goals = self.goal_nodes
+        else:
+            missable_goals = self.goal_nodes | self.rooted
+        for b in sorted(others):
+            if b in done_nodes:
+                continue
+            guarantee = set()
+            for n in b.free_travel_nodes:
+                if n.guarantee_nodesets:
+                    guarantee |= frozenset.intersection(*n.guarantee_nodesets)
+                for ns in n.missable_nodesets:
+                    if ns <= missable_goals:
+                        guarantee |= ns
+            guarantee -= b.free_travel_nodes
+            if not guarantee <= a.guaranteed:
+                others -= b.free_travel_nodes
+            done_nodes |= b.free_travel_nodes
+
+        done_nodes = set(self.rooted)
+        for b in sorted(others):
+            if b in done_nodes:
+                continue
+            for n in b.free_travel_nodes:
+                if not n.required_nodes:
+                    continue
+                if n.required_nodes - (self.rooted | b.connected_nodes):
+                    others -= b.free_travel_nodes
+                    break
+            done_nodes |= b.free_travel_nodes
+
+        if len(others) == 0 or \
+                (others == {a} and not self.config['trap_doors']):
+            raise DoorRouterException(f'Node {a} has no connectable options.')
+
         if a in enemy_nodes:
             enemies = enemy_nodes[a] - {a}
             temp = others - enemies
@@ -2912,7 +2982,9 @@ class Graph(RollbackMixin):
                 others = temp
 
         if random.random() > self.config['trap_doors']:
-            others.remove(a)
+            others.discard(a)
+        else:
+            others.add(a)
 
         if a in strict_candidates:
             others &= strict_candidates[a]
@@ -2934,8 +3006,8 @@ class Graph(RollbackMixin):
         else:
             b = a
 
-        #if {a, b} == self.previous_procedural_add_edge:
-        #    return None
+        if {a, b} == self.previous_procedural_add_edge:
+            raise DoorRouterException(f'Just tried edge: {a} {b}')
         self.add_edge(a, b, directed=False, procedural=True, simplify=False)
         self.discourage_nodes[a].add(b)
         self.discourage_nodes[b].add(a)
