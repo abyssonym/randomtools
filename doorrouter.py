@@ -1392,7 +1392,9 @@ class Graph(RollbackMixin):
             assert len(force_edges) == 1
             for e in force_edges:
                 if self.parent.config['lazy_complex_nodes']:
-                    if e.source.rank >= e.destination.rank:
+                    if e.source.rank is None or \
+                            e.source.rank >= e.destination.rank:
+                        assert e.destination.rank is not None
                         raise DoorRouterException(
                             f'Node {self} reachable from wrong direction.')
                 elif self not in e.get_guaranteed_orphanable():
