@@ -1850,22 +1850,17 @@ class Graph(RollbackMixin):
                     a.add_edge(b, conditions)
 
         def mini_naive_reachable_from(node):
-            reachable = {node}
             reachable_from = {node}
             while True:
-                old = (set(reachable), set(reachable_from))
-                for n in reachable & reachable_from:
+                old = set(reachable_from)
+                for n in old:
                     for e in n.reverse_edges:
                         if e.true_condition:
                             continue
                         reachable_from.add(e.source)
-                    for e in n.edges:
-                        if e.true_condition:
-                            continue
-                        reachable.add(e.destination)
-                if (reachable, reachable_from) == old:
+                if reachable_from == old:
                     break
-            return reachable & reachable_from
+            return reachable_from
 
         def mini_condition_reachable_from(node):
             reachable_from = mini_naive_reachable_from(node)
@@ -1893,6 +1888,8 @@ class Graph(RollbackMixin):
             old = set(necessary_nodes)
             for n in old:
                 reachable = mini_naive_reachable_from(n)
+                if self.root in reachable:
+                    continue
                 if n in self.goal_nodes and not reachable & self.unconnected:
                     more_reach, necessary = mini_condition_reachable_from(n)
                     necessary_nodes |= more_reach | necessary
@@ -1925,6 +1922,8 @@ class Graph(RollbackMixin):
         reduced = necessary_nodes & self.unconnected
         for n in self.goal_nodes:
             test = mini_naive_reachable_from(n)
+            if self.root in test:
+                continue
             if test & reduced:
                 continue
             more_test, _ = mini_condition_reachable_from(n)
