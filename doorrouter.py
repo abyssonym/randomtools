@@ -1884,6 +1884,7 @@ class Graph(RollbackMixin):
             return reachable & reachable_from, necessary
 
         necessary_nodes = set(self.goal_nodes)
+        necessary_nodes.add(self.root)
         while True:
             old = set(necessary_nodes)
             for n in old:
