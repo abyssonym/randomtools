@@ -1469,13 +1469,14 @@ class Graph(RollbackMixin):
     def __init__(self, filename=None, config=None, preset_connections=None,
                  strict_validator=None, lenient_validator=None,
                  testing=False, do_reduce=None, parent=None,
-                 definition_overrides=None):
+                 definition_overrides=None, infer_nodes=True):
         self.testing = testing
         self.parent = parent
         if do_reduce is not None:
             self.reduce = do_reduce
         else:
             self.reduce = REDUCE and not self.parent
+        self.infer_nodes = infer_nodes
 
         if config is None:
             if filename is None:
@@ -1720,10 +1721,6 @@ class Graph(RollbackMixin):
             else:
                 self.connectable.add(self.Node(line, self))
 
-        assert self.connectable
-        self.unconnected = self.connectable - {
-                self.get_by_label(l) for l in self.preset_connections.keys()}
-
         logic_filename = self.config['logic_filename']
         try:
             lines = read_lines_nocomment(logic_filename)
@@ -1731,6 +1728,23 @@ class Graph(RollbackMixin):
             from .tablereader import tblpath
             logic_filename = path.join(tblpath, logic_filename)
             lines = read_lines_nocomment(logic_filename)
+
+        if self.infer_nodes:
+            for line in lines:
+                if line.startswith('.'):
+                    continue
+                line = line.split()[0]
+                for operator in ['>>', '=>', '<<', '<=', '=', '>', '<']:
+                    if operator in line:
+                        for n in line.split(operator):
+                            if '*' in n:
+                                continue
+                            if self.get_by_label(n) is None:
+                                self.Node(n, self)
+                        break
+
+        self.unconnected = self.connectable - {
+                self.get_by_label(l) for l in self.preset_connections.keys()}
 
         for line in lines:
             while '  ' in line:
@@ -2142,8 +2156,6 @@ class Graph(RollbackMixin):
     def set_root(self, node):
         assert node in self.nodes
         self.root = node
-        if not (self.testing or self.parent):
-            assert self.root in self.connectable
         node.strict_full_guar_to = None
         self.clear_rooted_cache()
 
@@ -2857,6 +2869,7 @@ class Graph(RollbackMixin):
         self.verify_no_return()
 
     def verify_goal_connectable(self):
+        assert self.connectable and self.root in self.connectable
         for g in self.goal_nodes:
             reachable_from = {g}
             while True:
@@ -3131,6 +3144,180 @@ class Graph(RollbackMixin):
 
         self.solutions = abridged_paths
         return self.solutions
+
+    def visualize(self, output='visualize.html', relabel=None,
+                  ignore_edges=None,
+                  annotate_guaranteed=False, annotate_full_guaranteed=False,
+                  annotate_edges=False,
+                  height=720, width=1280,
+                  rooted_only=True, physics=True):
+        from pyvis.network import Network
+        from math import sin, cos, pi
+        import networkx
+        import colorsys
+        import json
+        if relabel is None:
+            relabel = {}
+        if ignore_edges is None:
+            ignore_edges = set()
+
+        rooted_nodes = sorted(self.rooted, key=lambda n: (n.rank, n.label))
+        unrooted_nodes = sorted(self.nodes-self.rooted,
+                                key=lambda n: (n.label))
+        if not rooted_only:
+            nodes = rooted_nodes + unrooted_nodes
+        else:
+            nodes = rooted_nodes
+        if rooted_nodes:
+            max_rank = max(n.rank for n in rooted_nodes) + 1
+        else:
+            max_rank = -1
+
+        edges = {e for e in self.all_edges
+                 if {e.source, e.destination} <= set(nodes)}
+
+        special_nodes = {self.root}
+        if hasattr(self, 'goal'):
+            special_nodes |= self.goal_nodes
+        for e in edges:
+            special_nodes |= e.true_condition
+        special_nodes = {relabel[s.label] if s.label in relabel else s.label
+                         for s in special_nodes}
+
+        nxgraph = networkx.DiGraph()
+
+        bigfont, midfont, smallfont = 18, 15, 12
+
+        done_node_labels = set()
+        coords = {}
+        for i, n in enumerate(nodes):
+            if max_rank > 1 and n.rank is not None:
+                rank_ratio = (n.rank-1) / (max_rank-1)
+            else:
+                #rank_ratio = random.random()
+                rank_ratio = 1
+            hue = rank_ratio * (5/6)
+            r, g, b = colorsys.hls_to_rgb(hue, 0.75, 1)
+            r = int(round(r*255))
+            g = int(round(g*255))
+            b = int(round(b*255))
+            color = f'#{r:0>2x}{g:0>2x}{b:0>2x}'
+            if n.label in relabel:
+                pretty_label = relabel[n.label]
+            else:
+                pretty_label = n.label
+            if pretty_label in done_node_labels:
+                continue
+            done_node_labels.add(pretty_label)
+            shape = 'ellipse'
+            if n.rank is not None:
+                sinval = sin(rank_ratio * 2 * pi)
+                cosval = cos(rank_ratio * 2 * pi)
+                x = int(round((width / 2) + (sinval * (width / 4))))
+                y = -1 * int(round((height / 2) + (cosval * (height / 4))))
+            else:
+                x = int(round(width))
+                y = int(round(height / 2)) + (height // 4)
+            assert n.label not in coords
+            coords[pretty_label] = (x, y)
+            display_label = f'{pretty_label}'
+            if pretty_label in special_nodes:
+                display_label = display_label.split('\n')
+                display_label[0] = f'<b>{display_label[0]}</b>'
+                display_label = '\n'.join(display_label)
+            if annotate_guaranteed:
+                guaranteed = ','.join(sorted(g.label for g in n.guaranteed
+                                             if g not in {n, self.root}))
+                if guaranteed:
+                    display_label += f'\n[{guaranteed}]'
+            if annotate_full_guaranteed:
+                fgs = {fg - n.guaranteed for fg in n.full_guaranteed}
+                for i, fg in enumerate(sorted(
+                        fgs, key=lambda ffgg: (len(ffgg), ffgg))):
+                    if len(fgs) <= 1:
+                        break
+                    guaranteed = ','.join(sorted(g.label for g in fg))
+                    if not guaranteed:
+                        guaranteed = ' '
+                    display_label += f'\n{i+1}. [{guaranteed}]'
+            if annotate_edges:
+                to_annotate = sorted(n.guaranteed_edges)
+                s = '\n'.join([f'{e}' for e in to_annotate])
+                display_label += f'\n{s}'
+            if '\n' not in display_label:
+                display_label = f' {display_label} '
+            if pretty_label in special_nodes:
+                nxgraph.add_node(
+                    pretty_label, label=display_label, x=x, y=y,
+                    color=color, shape=shape, font={'size': bigfont,
+                                                    'multi': 'html'})
+            else:
+                nxgraph.add_node(pretty_label, label=display_label, x=x, y=y,
+                                 color=color, shape=shape,
+                                 font={'size': midfont})
+
+        ranked_edges = {e for e in edges if e.source.rank is not None
+                        and e.destination.rank is not None}
+        unranked_edges = edges - ranked_edges
+        ranked_edges = sorted(ranked_edges, key=lambda e: (
+            e.destination.rank, e.source.rank, str(e)))
+        unranked_edges = sorted(unranked_edges, key=lambda e: str(e))
+        edges = ranked_edges + unranked_edges
+        done_edges = set()
+        done_edge_signatures = set()
+
+        font = {'size': smallfont}
+        for e in edges:
+            if e in ignore_edges:
+                continue
+            source_label = e.source.label
+            destination_label = e.destination.label
+            if e.source.label in relabel:
+                source_label = relabel[e.source.label]
+            if e.destination.label in relabel:
+                destination_label = relabel[e.destination.label]
+            if source_label == destination_label:
+                continue
+            condition_labels = [
+                relabel[n.label] if n.label in relabel else n.label
+                for n in e.true_condition]
+            if any('\n' in label for label in condition_labels):
+                condition_label = '\n&\n'.join(sorted(condition_labels))
+            else:
+                condition_label = ' & '.join(sorted(condition_labels))
+            key = (source_label, destination_label, condition_label)
+            if key in done_edges:
+                continue
+            done_edges.add(key)
+            if e.true_condition:
+                edge_signature = str(e)
+                assert edge_signature not in done_edge_signatures
+                x1, y1 = coords[source_label]
+                x2, y2 = coords[destination_label]
+                x = (x1 + x2) >> 1
+                y = (y1 + y2) >> 1
+                nxgraph.add_node(edge_signature, label=f' {condition_label} ',
+                                 color='#ffffff', shape='box', font=font,
+                                 x=x, y=y)
+                nxgraph.add_edge(source_label, edge_signature)
+                source_node = [n for n in nxgraph.nodes
+                               if str(n) == source_label]
+                assert len(source_node) == 1
+                nxgraph.add_edge(edge_signature, destination_label,
+                                 color=nxgraph.nodes[source_label]['color'])
+                done_edge_signatures.add(edge_signature)
+            else:
+                nxgraph.add_edge(source_label, destination_label)
+
+        net = Network(height=f'{height}px', width=f'{width}px',
+                      bgcolor='#000000', directed=True)
+        net.inherit_edge_colors(True)
+        net.from_nx(nxgraph)
+        net.toggle_physics(physics)
+        net.show_buttons()
+        net.barnes_hut(gravity=-500, central_gravity=0.5, spring_length=40,
+                       spring_strength=0.04, damping=0.9, overlap=0.95)
+        net.write_html(output, notebook=False)
 
     def connect_everything(self):
         PROGRESS_BAR_LENGTH = 80
