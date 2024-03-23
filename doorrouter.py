@@ -1553,7 +1553,8 @@ class Graph(RollbackMixin):
                 value = len(required_nodes)
                 s += f'  {key:20} {value}\n'
             key = 'total nodes:'
-            value = len(self.connectable)
+            value = len(self.rooted & self.initial_unconnected)
+            value = f'{value}/{len(self.initial_unconnected)}'
             s += f'  {key:20} {value}\n'
             key = 'generated edges:'
             value = len({e for e in self.all_edges if e.generated
