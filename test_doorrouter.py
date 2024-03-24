@@ -5,6 +5,7 @@ from string import ascii_lowercase, ascii_uppercase
 from sys import exc_info
 from time import time
 from subprocess import call
+from collections import defaultdict
 import random
 import traceback
 
@@ -24,9 +25,14 @@ def load_test_data(filename, root_label='1d1-001', unconnected=None):
     try:
         node_labels = set()
         edge_labels = set()
+        requirements = defaultdict(set)
         with open(filename) as f:
             for line in f:
                 line = line.strip()
+                if line.startswith('.require '):
+                    _, node, requirement = line.split(' ')
+                    requirements[node].add(requirement)
+                    continue
                 edge, condition = line.split(': ')
                 condition = condition.strip('*')
                 assert condition[0] == '['
@@ -49,9 +55,25 @@ def load_test_data(filename, root_label='1d1-001', unconnected=None):
         random.shuffle(edge_labels)
         g = Graph(testing=True)
         for n in node_labels:
-            n = g.Node(n, g)
+            n = n.rstrip('?')
+            if g.by_label(n) is not None:
+                continue
+            n = g.Node(n.rstrip('?'), g)
+        for node, nodereqs in requirements.items():
+            node = g.by_label(node)
+            if node is None:
+                continue
+            for r in nodereqs:
+                r = g.by_label(r)
+                node.add_required(r)
         for source, destination, condition in edge_labels:
-            g.add_edge(source, destination, condition=condition)
+            if destination.endswith('?'):
+                destination = destination.rstrip('?')
+                questionable = True
+            else:
+                questionable = False
+            g.add_edge(source, destination, condition=condition,
+                       questionable=questionable)
         if unconnected is not None:
             g.unconnected = set()
             with open(unconnected) as f:
@@ -127,45 +149,75 @@ class Replay:
         self.graph.testing = False
         self.graph.reduce = True
         self.needs_commit = True
+        self.optimize_commits = False
+        self.generative_phase = False
 
     def add_node(self, label):
+        if label.endswith('?'):
+            label = label.rstrip('?')
         n = self.graph.by_label(label)
         if n is None:
             n = self.graph.Node(label, parent=self.graph)
         self.needs_commit = True
         return n
 
-    def add_edge(self, parameter):
+    def parameter_to_nodes(self, parameter):
+        questionable = False
         edge, _ = parameter.split(':')
         a, b = edge.split('->')
+        if b.endswith('?'):
+            b = b.rstrip('?')
+            questionable = True
         _, cs = parameter.split('[')
         assert cs.endswith(']')
         cs = cs[:-1]
         cs = cs.split(', ')
-        self.graph.add_edge(a, b, condition='&'.join(cs))
+        anode = self.graph.by_label(a)
+        bnode = self.graph.by_label(b)
+        return anode, bnode, cs, questionable
+
+    def add_edge(self, parameter):
+        anode, bnode, cs, questionable = self.parameter_to_nodes(parameter)
+        count1 = len([e for e in anode.edges if e.destination is bnode])
+        self.graph.add_edge(anode, bnode, condition='&'.join(cs),
+                            procedural=self.generative_phase,
+                            simplify=not self.generative_phase,
+                            questionable=questionable)
+        count2 = len([e for e in anode.edges if e.destination is bnode])
+        if self.generative_phase:
+            assert count2 == count1 + 1
         self.needs_commit = True
 
     def remove_edge(self, parameter):
-        edges = [e for e in self.graph.all_edges if str(e) == parameter]
+        anode, bnode, cs, questionable = self.parameter_to_nodes(parameter)
+        edges = [e for e in anode.edges
+                 if e.destination is bnode and str(e).startswith(parameter)
+                 and e.questionable == questionable]
+        if self.generative_phase:
+            old_edges = list(edges)
+            edges = [e for e in edges if e.generated]
         assert edges
         for e in edges:
             e.remove()
         self.needs_commit = True
 
     def commit(self, ignore_commits=False):
+        self.generative_phase = True
         if not self.needs_commit:
             return
         self.graph.clear_rooted_cache()
         if not ignore_commits:
             self.graph.rooted
         self.graph.commit()
-        self.needs_commit = False
+        if self.optimize_commits:
+            self.needs_commit = False
 
     def rollback(self):
         if not self.needs_commit:
             return
         self.graph.rollback()
-        self.needs_commit = False
+        if self.optimize_commits:
+            self.needs_commit = False
 
     def advance(self, ignore_commits=False):
         self.progress_index += 1
@@ -2435,8 +2487,8 @@ def test_required_nodes1():
     g.add_edge('x', 'z')
     g.add_edge('y', 'z')
     g.add_edge('z', 'root')
-    g.by_label('x').required_nodes.add(g.by_label('z'))
-    g.by_label('y').required_nodes.add(g.by_label('z'))
+    g.by_label('x').add_required(g.by_label('z'))
+    g.by_label('y').add_required(g.by_label('z'))
     try:
         g.rooted
     except DoorRouterException:
@@ -2453,7 +2505,7 @@ def test_required_nodes2():
     g.add_edge('a', 'b', condition='y')
     g.add_edge('b', 'y')
     g.add_edge('y', 'root')
-    g.by_label('x').required_nodes.add(g.by_label('y'))
+    g.by_label('x').add_required(g.by_label('y'))
     try:
         g.rooted
     except DoorRouterException:
@@ -2502,6 +2554,23 @@ def test_one_time_edge():
     assert g.by_label('a') not in g.root_reachable_from
     assert len(g.root_reachable_from) == 3
     g.verify()
+
+def test_double_required():
+    g = get_graph()
+    g.add_edge('root', 'a')
+    g.add_edge('root', 'b')
+    g.add_edge('a', 'c')
+    g.add_edge('b', 'c')
+    g.add_edge('c', 'root')
+    g.by_label('a').add_required(g.by_label('c'))
+    g.by_label('b').add_required(g.by_label('c'))
+    try:
+        g.verify()
+    except DoorRouterException as e:
+        assert 'require c' in str(e)
+        return
+    g.rooted
+    assert False
 
 def test_custom_replay(filename='test_replay.txt',
                        midpoint=0, root='1d1-001'):
