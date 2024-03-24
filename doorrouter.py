@@ -391,6 +391,11 @@ class Graph(RollbackMixin):
             return self in self.parent.conditional_nodes
 
         @cached_property
+        def condition_edges(self):
+            return frozenset({e for e in self.parent.all_edges
+                              if self in e.true_condition})
+
+        @cached_property
         def is_guarantee_condition(self):
             return self in self.parent.guarantee_nodes
 
@@ -739,49 +744,26 @@ class Graph(RollbackMixin):
             edges = edges & valid_edges
             guar_to = self.guar_to
 
-            if not hasattr(self.parent, 'problematic_edges'):
-                self.parent.problematic_edges = set()
-
-            if self is root:
-                strict = False
+            strict = strict and self is not root
             if strict:
                 full_guar_to = self.strict_full_guar_to
             else:
                 full_guar_to = self.full_guar_to
-            self.edge_guar_to[self] = frozenset()
-            assert self in guar_to
-            if strict or self not in full_guar_to:
-                if self.guaranteed is not None and not strict:
-                    full_guar_to[self] = self.parent.simplify_full_guaranteed(
-                            {self.guaranteed})
-                else:
-                    full_guar_to[self] = self.parent.simplify_full_guaranteed(
-                            {guar_to[self]})
-            if self.guaranteed:
-                guar_to[self] = self.guaranteed
-            else:
-                guar_to[self] = frozenset({self})
 
-            reduced_edge_ranks = None
-            if self is root and self.parent.reduced_graph is not None:
-                if not hasattr(self.parent, 'reduced_edge_ranks'):
-                    self.parent.generate_reduced_edge_ranks()
-                reduced_edge_ranks = dict(self.parent.reduced_edge_ranks)
-                assert self.parent.reduced_edge_ranks.keys() >= valid_edges
-                reduced_edge_ranks = {
-                    k: v for (k, v) in self.parent.reduced_edge_ranks.items()
-                    if k in valid_edges}
-
-            done_edges = set()
-            original_edges = set(edges)
+            #done_edges = set()
+            #original_edges = frozenset(edges)
             edges = {e for e in edges if e.source in guar_to and
                      e.source in full_guar_to}
+            valid_conditional_edges = \
+                    valid_edges & self.parent.conditional_edges
+            edges_by_node = {}
+
             while True:
                 if not edges:
-                    assert done_edges >= original_edges
+                    #assert done_edges >= original_edges
                     break
 
-                temp = edges - self.parent.conditional_edges
+                temp = edges - valid_conditional_edges
                 if temp:
                     e = temp.pop()
                     edges.remove(e)
@@ -800,7 +782,6 @@ class Graph(RollbackMixin):
                         guar_to[e.source] | {e.destination} | e.true_condition)
                 gedges = self.edge_guar_to[e.source] | {e}
 
-                simplified = None
                 if e.destination in full_guar_to:
                     full_guaranteed = full_guar_to[e.source]
                     duaranteed = guar_to[e.destination]
@@ -809,17 +790,17 @@ class Graph(RollbackMixin):
                     if guaranteed >= duaranteed and \
                             gedges >= dedges:
                         if full_guaranteed <= dull_guaranteed:
-                            done_edges.add(e)
+                            #done_edges.add(e)
                             continue
                         else:
                             simplified = self.parent.simplify_full_guaranteed(
                                     full_guaranteed | dull_guaranteed)
                             if simplified <= dull_guaranteed:
-                                done_edges.add(e)
+                                #done_edges.add(e)
                                 continue
 
-                special_gedges, special_guaranteed = set(), set()
                 if self is root and e.true_condition:
+                    special_gedges, special_guaranteed = set(), set()
                     for n in e.true_condition:
                         if n is root:
                             continue
@@ -830,32 +811,26 @@ class Graph(RollbackMixin):
                                 n.edges, n_edges, strict=False)
                         special_gedges |= (n.edge_guar_to[e.source] |
                                            root.edge_guar_to[n])
-                        special_guaranteed |= n.guar_to[e.source] | \
-                                {n2 for e2 in special_gedges for n2 in
-                                 (e2.source, e2.destination)}
+                        special_guaranteed |= n.guar_to[e.source]
 
-                if special_gedges and not (gedges >= special_gedges):
-                    gedges |= special_gedges
-                    self.parent.problematic_edges.add(e)
+                    if special_gedges and not (gedges >= special_gedges):
+                        gedges |= special_gedges
+                    if special_guaranteed and \
+                            not (guaranteed >= special_guaranteed):
+                        guaranteed |= special_guaranteed
 
-                if e.destination not in self.edge_guar_to:
+                if e.destination not in guar_to:
+                    #assert e.destination not in self.edge_guar_to
                     old_gedges = None
                     self.edge_guar_to[e.destination] = frozenset(gedges)
+                    old_guar = None
+                    guar_to[e.destination] = guaranteed
                 else:
+                    #assert e.destination in self.edge_guar_to
                     old_gedges = self.edge_guar_to[e.destination]
                     if old_gedges != gedges:
                         self.edge_guar_to[e.destination] = frozenset(
                                 old_gedges & gedges)
-
-                if special_guaranteed and \
-                        not (guaranteed >= special_guaranteed):
-                    guaranteed |= special_guaranteed
-                    self.parent.problematic_edges.add(e)
-
-                if e.destination not in guar_to:
-                    old_guar = None
-                    guar_to[e.destination] = guaranteed
-                else:
                     old_guar = guar_to[e.destination]
                     if old_guar != guaranteed:
                         guar_to[e.destination] = guaranteed & old_guar
@@ -881,15 +856,22 @@ class Graph(RollbackMixin):
                                 self.parent.simplify_full_guaranteed(
                                         full_guaranteed)
 
-                done_edges.add(e)
-                old_guaranteed = (old_guar, old_full_guar, old_gedges)
-                if old_guaranteed != (guar_to[e.destination],
-                                      full_guar_to[e.destination],
-                                      self.edge_guar_to[e.destination]):
-                    if e.destination.is_condition:
-                        edges |= {e2 for e2 in valid_edges
-                                  if e.destination in e2.true_condition}
-                    edges |= (e.destination.edges & valid_edges)
+                #done_edges.add(e)
+                old_guaranteed = (old_full_guar, old_gedges, old_guar)
+                new_guaranteed = (full_guar_to[e.destination],
+                                  self.edge_guar_to[e.destination],
+                                  guar_to[e.destination])
+                if old_guaranteed != new_guaranteed:
+                    if e.destination not in edges_by_node:
+                        if e.destination.is_condition:
+                            edges_by_node[e.destination] = (
+                                (e.destination.edges & valid_edges) |
+                                (e.destination.condition_edges
+                                 & valid_conditional_edges))
+                        else:
+                            edges_by_node[e.destination] = \
+                                e.destination.edges & valid_edges
+                    edges |= edges_by_node[e.destination]
                     if self is root:
                         e.destination.guar_to[e.destination] = \
                                 e.destination.guaranteed
@@ -1391,7 +1373,8 @@ class Graph(RollbackMixin):
                     assert r in self.parent.theoretically_reachable
                 if r not in self.parent.double_rooted:
                     assert r in self.parent.initial_unconnected or \
-                            r.label in self.parent.preset_connections.keys()
+                            r.label in self.parent.preset_connections.keys() \
+                            or r not in self.parent.connectable
                     raise DoorRouterException(f'{self} requires {r}.')
                 if self in r.guaranteed:
                     raise DoorRouterException(f'{self} requires {r}.')
@@ -2096,12 +2079,10 @@ class Graph(RollbackMixin):
             rfr, rrf, erfr = self.root.get_guaranteed_reachable(
                     and_from=True, do_reduce=False)
         elif self.reduce:
-            self.problematic_edges = set()
             self.reduced_graph = self.get_reduced_graph()
             rfr, rrf, erfr = self.root.get_guaranteed_reachable(
                     and_from=True, do_reduce=True)
         else:
-            self.problematic_edges = set()
             self.reduced_graph = None
             rfr, rrf, erfr = self.root.get_guaranteed_reachable(
                     and_from=True, do_reduce=False)
