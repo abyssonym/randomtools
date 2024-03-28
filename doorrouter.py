@@ -234,10 +234,6 @@ class Graph(RollbackMixin):
                 if hasattr(self.parent, 'node_mapping'):
                     return self.parent.node_mapping[self]
 
-            @cached_property
-            def innate_guaranteed(self):
-                return self.true_condition | {self.source, self.destination}
-
             def is_satisfied_by(self, nodes):
                 if not self.enabled:
                     return False
@@ -285,19 +281,6 @@ class Graph(RollbackMixin):
                 assert rfr1 == self.source.parent.reachable_from_root
                 assert rrf1 == self.source.parent.root_reachable_from
                 return (rfr1-rfr2), (rrf1-rrf2)
-
-            def get_guaranteed_orphanable_reroot(self):
-                before = self.source.parent.reachable_from_root
-                naive_orphanable = {
-                        n for n in self.source.parent.nodes if n.guaranteed and
-                        {self.source, self.destination} <= n.guaranteed}
-                self.enabled = False
-                root = self.source.parent.root
-                after, _ = root.get_guaranteed_reachable_only()
-                assert after <= before
-                guaranteed_orphanable = before-after
-                self.enabled = True
-                return guaranteed_orphanable
 
             def get_guaranteed_orphanable(self):
                 orphans = {n for n in self.source.parent.rooted
@@ -640,7 +623,8 @@ class Graph(RollbackMixin):
         def add_missable(self, nodeset):
             nodeset = self.add_nodeset(nodeset, required_too=False)
             if nodeset:
-                self.missable_nodesets.add(frozenset(nodeset))
+                self.missable_nodesets = frozenset(
+                    self.missable_nodesets | {frozenset(nodeset)})
                 self.parent.changelog.append(('MISSABLE',
                                               f'{self},{nodeset}'))
 
@@ -1571,7 +1555,7 @@ class Graph(RollbackMixin):
                 s += f'  {key:21} {value}\n'
             key = 'total nodes:'
             value = len(self.rooted & self.initial_unconnected)
-            value = f'{value}/{len(self.initial_unconnected)}'
+            value = f'{value}/{len(self.rooted)}'
             s += f'  {key:21} {value}\n'
             key = 'generated edges:'
             value = len({e for e in self.all_edges if e.generated
@@ -1600,111 +1584,6 @@ class Graph(RollbackMixin):
         for count, node in pnodes[:10]:
             s2 += f'  {count:>4} {node}\n'
         return f'{s1}\n\n{s2}'.strip()
-
-    def copy(self, rooted_only=False):
-        raise NotImplementedError
-        self.rooted
-        g = Graph(testing=True, do_reduce=False)
-        for e in self.all_edges:
-            if rooted_only and not (e.source.rooted and e.destination.rooted):
-                continue
-            if g.by_label(e.source.label) is None:
-                g.Node(e.source.label, parent=g)
-            if g.by_label(e.destination.label) is None:
-                g.Node(e.destination.label, parent=g)
-            if e.false_condition:
-                raise NotImplementedError
-            if e.true_condition:
-                for n in e.true_condition:
-                    if g.by_label(n.label) is None:
-                        g.Node(n.label, parent=g)
-                condition = '&'.join([n.label for n in e.true_condition])
-            else:
-                condition = None
-            g.add_edge(e.source.label, e.destination.label, condition)
-
-        if not rooted_only:
-            for n1 in self.nodes:
-                n2 = g.by_label(n1.label)
-                if n2 is None:
-                    g.Node(n1.label, parent=g)
-
-        edge_map = {}
-        for e1 in self.all_edges:
-            for e2 in g.all_edges:
-                if (e1.source.label == e2.source.label and \
-                        e1.destination.label == e2.destination.label and
-                        str(e1).rstrip('*') == str(e2).strip('*')):
-                    assert e1 not in edge_map
-                    assert e1.source.parent is self
-                    assert e2.source.parent is g
-                    edge_map[e1] = e2
-
-        for e1 in edge_map:
-            e2 = edge_map[e1]
-            assert e1 is not e2
-            assert self in (e1.source.parent, e2.source.parent)
-            assert g in (e1.source.parent, e2.source.parent)
-
-        def map_copy_nodes(nodes):
-            result = {g.by_label(n.label) for n in nodes}
-            assert None not in result
-            return result
-
-        def map_copy_edges(edges):
-            return {edge_map[e] for e in edges}
-
-        g.set_root(g.by_label(self.root.label))
-        g._reachable_from_root = map_copy_nodes(self._reachable_from_root)
-        g._root_reachable_from = map_copy_nodes(self._root_reachable_from)
-        g._edge_reachable_from_root = \
-                map_copy_edges(self._edge_reachable_from_root)
-        for new_node in g.nodes:
-            old_node = self.by_label(new_node.label)
-            for oldn in old_node.guar_to:
-                newn = g.by_label(oldn.label)
-                new_node.guar_to[newn] = frozenset(
-                        map_copy_nodes(old_node.guar_to[oldn]))
-
-            for oldn in old_node.full_guar_to:
-                newn = g.by_label(oldn.label)
-                new_node.full_guar_to[newn] = {
-                    frozenset(map_copy_nodes(fg)) for fg in
-                    old_node.full_guar_to[oldn]}
-
-            for oldn in old_node.strict_full_guar_to:
-                newn = g.by_label(oldn.label)
-                new_node.strict_full_guar_to[newn] = {
-                    frozenset(map_copy_nodes(fg)) for fg in
-                    old_node.strict_full_guar_to[oldn]}
-
-            for oldn in old_node.edge_guar_to:
-                newn = g.by_label(oldn.label)
-                new_node.edge_guar_to[newn] = frozenset(
-                        map_copy_edges(old_node.edge_guar_to[oldn]))
-
-            if hasattr(old_node, 'prereachable'):
-                new_node.prereachable = {}
-                for truth in old_node.prereachable:
-                    nodes, edges = old_node.prereachable[truth]
-                    new_node.prereachable[truth] = (
-                            frozenset(map_copy_nodes(nodes)),
-                            frozenset(map_copy_edges(edges)))
-
-            if hasattr(old_node, 'prereachable_from'):
-                new_node.prereachable_from = frozenset(
-                        map_copy_nodes(old_node.prereachable_from))
-
-            new_node.rank = old_node.rank
-
-        for attr in ('connectable', 'conditional_nodes', 'guarantee_nodes',
-                     'initial_unconnected'):
-            if hasattr(self, attr):
-                setattr(g, attr, map_copy_nodes(getattr(self, attr)))
-
-        g.testing = False
-        g.commit()
-        return g
 
     def initialize_empty(self):
         self.root = None
