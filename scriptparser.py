@@ -1,13 +1,24 @@
 from .utils import fake_yaml as yaml
-from collections import OrderedDict
-from io import BytesIO
+from collections import OrderedDict, defaultdict
+from io import BytesIO, SEEK_END
 from sys import argv
+
+
+def hexify(s):
+    result = []
+    while s:
+        w = s[:4]
+        s = s[4:]
+        w = ' '.join('{0:0>2x}'.format(c) for c in w)
+        result.append(w)
+    return ' '.join(result)
 
 
 class TrackedPointer:
     def __init__(self, pointer, virtual_address, parser):
         self.virtual_address = virtual_address
         self.pointer = pointer
+        self.old_pointer = pointer
         self.parser = parser
         assert self.pointer - self.virtual_address >= 0
 
@@ -31,6 +42,10 @@ class TrackedPointer:
     @property
     def converted(self):
         return self.parser.convert_pointer(self)
+
+    @property
+    def converted_repointer(self):
+        return self.parser.convert_pointer(self, repointed=True)
 
     @property
     def bytecode(self):
@@ -81,15 +96,17 @@ class Instruction:
             value = self.parser.data.read(length)
             value = int.from_bytes(value,
                                    byteorder=self.parser.config['byte_order'])
+            is_text = 'is_text' in pmani and pmani['is_text']
+            if is_text:
+                address = self.parser.data.tell()
+                text_parameters[parameter_name] = \
+                        self.parser.get_text(value, self)
+                self.parser.data.seek(address)
+                parameters[parameter_name] = value
+                continue
             if 'track_pointer' in pmani and pmani['track_pointer']:
                 value = self.parser.get_tracked_pointer(
                         value, pmani['virtual_address'])
-                is_text = 'is_text' in pmani and pmani['is_text']
-                if is_text:
-                    address = self.parser.data.tell()
-                    text_parameters[parameter_name] = \
-                            self.parser.get_text(value)
-                    self.parser.data.seek(address)
                 if value not in self.parser.script_pointers and not is_text:
                     self.parser.script_pointers.add(value)
             assert parameter_name not in parameters
@@ -139,6 +156,10 @@ class Instruction:
     def is_terminator(self):
         return self.opcode in self.parser.config['terminators']
 
+    @property
+    def bytecode(self):
+        return self.parser.instruction_to_bytecode(self)
+
 
 class Script:
     def __init__(self, pointer, parser):
@@ -181,6 +202,10 @@ class Script:
         return {v for (k, v) in self.parser.scripts.items()
                 if k in references}
 
+    @property
+    def bytecode(self):
+        return self.parser.script_to_bytecode(self)
+
 
 class Parser:
     Script = Script
@@ -195,6 +220,8 @@ class Parser:
             with open(data, 'r+b') as f:
                 data = f.read()
         self.data = BytesIO(data)
+        self.original_data = self.data.read()
+        self.data.seek(0)
         self.pointers = {}
         self.script_pointers = set()
         for p in pointers:
@@ -215,12 +242,11 @@ class Parser:
 
     add_pointer = get_tracked_pointer
 
-    def convert_pointer(self, pointer):
-        return pointer.pointer - pointer.virtual_address
-
-    def pointer_to_bytecode(self, pointer):
-        return pointer.pointer.to_bytes(length=self.config['pointer_size'],
-                                        byteorder=self.config['byte_order'])
+    def convert_pointer(self, pointer, repointed=False):
+        if repointed:
+            return pointer.repointer - pointer.virtual_address
+        else:
+            return pointer.pointer - pointer.virtual_address
 
     def get_text_decode_table(self):
         self.text_decode_table = {}
@@ -243,7 +269,69 @@ class Parser:
                 self.text_decode_table[excodepoint] = character
                 self.text_encode_table[character] = excodepoint
 
-    def get_text(self, pointer):
+    def decode(self, pointer, data=None):
+        if data is None:
+            data = self.data
+        if isinstance(data, bytes):
+            data = BytesIO(data)
+        address = data.tell()
+        data.seek(pointer)
+        decoded = ''
+        char_size = self.config['text_char_size']
+        while True:
+            value = data.read(char_size)
+            if len(value) < char_size:
+                decoded += '{EOF}'
+                break
+            value = int.from_bytes(value, byteorder=self.config['byte_order'])
+            if value in self.text_decode_table:
+                decoded += self.text_decode_table[value]
+            else:
+                word = ('{0:0>%sx}' % (char_size*2)).format(value)
+                decoded += '{%s}' % word
+            if value in self.config['text_terminators']:
+                break
+        data.seek(address)
+        return decoded
+
+    def encode(self, text):
+        original_text = text
+        bytecode = b''
+        char_size = self.config['text_char_size']
+        byteorder = self.config['byte_order']
+        encode_order = sorted(self.text_encode_table,
+                              key=lambda w: (-len(w), w))
+        while True:
+            if not text:
+                break
+            value = None
+            if text.startswith('{'):
+                index = text.index('}')
+                word = text[0:index+1]
+                if word == '{EOF}':
+                    break
+                elif word in self.text_encode_table:
+                    value = self.text_encode_table[word]
+                else:
+                    value = int(word[1:-1], 0x10)
+                text = text[index+1:]
+            else:
+                for word in encode_order:
+                    if '{' in word:
+                        continue
+                    if text.startswith(word):
+                        value = self.text_encode_table[word]
+                        text = text[len(word):]
+                        break
+            if value is None:
+                raise Exception(f'Unable to encode "{text}".')
+            bytecode += value.to_bytes(length=char_size,
+                                       byteorder=byteorder)
+        if value not in self.config['text_terminators']:
+            print(f'WARNING: "{original_text}" not terminated properly.')
+        return bytecode
+
+    def get_text(self, value, instruction):
         raise NotImplementedError
 
     def format_opcode(self, opcode):
@@ -292,6 +380,114 @@ class Parser:
             self.format_length = max(length, self.format_length)
         else:
             self.format_length = length
+
+    def text_to_parameter_bytecode(self, parameter_name, instruction):
+        raise NotImplementedError
+
+    def pointer_to_bytecode(self, pointer):
+        if hasattr(pointer, 'repointer'):
+            pointer = pointer.repointer
+        else:
+            pointer = pointer.pointer
+        return pointer.to_bytes(length=self.config['pointer_size'],
+                                byteorder=self.config['byte_order'])
+
+    def instruction_to_bytecode(self, instruction):
+        bytecode = instruction.opcode.to_bytes(
+                length=self.config['opcode_size'],
+                byteorder=self.config['byte_order'])
+        for parameter_name, value in instruction.parameters.items():
+            pmani = instruction.manifest['parameters'][parameter_name]
+            if 'is_text' in pmani and pmani['is_text']:
+                bytecode += self.text_to_parameter_bytecode(
+                        parameter_name, instruction)
+            elif isinstance(value, int):
+                bytecode += value.to_bytes(length=pmani['length'],
+                                           byteorder=self.config['byte_order'])
+            else:
+                bytecode += value.bytecode
+        return bytecode
+
+    def script_to_bytecode(self, script):
+        return b''.join(i.bytecode for i in script.instructions)
+
+    def dump_all_scripts(self, header):
+        bytecode = BytesIO(header)
+        scripts_by_dependency = defaultdict(set)
+        for _, s in self.scripts.items():
+            for d in s.referenced_scripts:
+                scripts_by_dependency[d].add(s)
+        done_scripts = set()
+        assert not any(hasattr(s.pointer, 'repointer')
+                       for s in self.scripts.values())
+        reserved = {}
+        while True:
+            if done_scripts >= set(self.scripts.values()):
+                break
+            chosen = None
+            candidates = {s for s in set(self.scripts.values()) - done_scripts}
+            candidates = {s for s in candidates
+                          if s.referenced_scripts <= done_scripts | {s}}
+            if not candidates:
+                temp = candidates & set(reserved.keys())
+                if temp:
+                    candidates = temp
+                a = lambda s: len(s.referenced_scripts - done_scripts)
+                b = lambda s: -len(scripts_by_dependency[s] - done_scripts)
+                c = lambda s: -len(s.bytecode)
+                candidates = sorted(set(self.scripts.values()) - done_scripts,
+                                    key=lambda s: (a(s), b(s), c(s), s))
+                bytecode.seek(0, SEEK_END)
+                reservation = bytecode.tell()
+                chosen = candidates[0]
+                for s in sorted(chosen.referenced_scripts
+                                - (done_scripts | set(reserved.keys()))):
+                    repointer = reservation | s.pointer.virtual_address
+                    s.pointer.repointer = repointer
+                    reserved[s] = reservation
+                    assert reservation == bytecode.tell()
+                    bytecode.seek(reservation)
+                    bytecode.write(b'\x00' * len(s.bytecode))
+                    reservation += len(s.bytecode)
+            if chosen is None:
+                chosen = max(candidates, key=lambda s: (len(s.bytecode), s))
+            assert chosen not in done_scripts
+            assert chosen is self.scripts[chosen.pointer.old_pointer]
+            if hasattr(chosen.pointer, 'repointer'):
+                assert chosen in reserved
+            if chosen in reserved:
+                assert hasattr(chosen.pointer, 'repointer')
+                assert reserved[chosen] == chosen.pointer.converted_repointer
+                repointer = chosen.pointer.repointer
+                bytecode.seek(reserved[chosen])
+                test = bytecode.read(len(chosen.bytecode))
+                assert set(test) <= {0}
+                bytecode.seek(reserved[chosen])
+                bytecode.write(chosen.bytecode)
+            elif chosen.bytecode in bytecode:
+                repointer = bytecode.index(chosen.bytecode) | \
+                        chosen.pointer.virtual_address
+                import pdb; pdb.set_trace()
+            else:
+                bytecode.seek(0, SEEK_END)
+                repointer = bytecode.tell() | chosen.pointer.virtual_address
+                if hasattr(chosen.pointer, 'repointer'):
+                    assert chosen.pointer.repointer == repointer
+                bytecode.write(chosen.bytecode)
+
+            assert chosen is self.scripts[chosen.pointer.pointer]
+            if hasattr(chosen.pointer, 'repointer'):
+                assert chosen.pointer.repointer == repointer
+            chosen.pointer.repointer = repointer
+            done_scripts.add(chosen)
+            assert chosen.referenced_scripts <= \
+                    done_scripts | set(reserved.keys())
+        bytecode.seek(0)
+        result = bytecode.read()
+        return result
+
+    def to_bytecode(self):
+        raise NotImplementedError
 
     def read_script(self, pointer):
         script = self.Script(pointer=pointer, parser=self)
