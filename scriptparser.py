@@ -53,10 +53,18 @@ class TrackedPointer:
 
 
 class Instruction:
-    def __init__(self, script):
-        self.script = script
-        self.read_from_data()
-        self.script.instructions.append(self)
+    def __init__(self, script=None, opcode=None, parameters=None, parser=None):
+        self.start_address, self.end_address = None, None
+        self.script = None
+        if script is not None:
+            self.set_script(script)
+        if parser is not None:
+            self._parser = parser
+        if opcode is None and parameters is None:
+            self.read_from_data()
+        if opcode is not None and parameters is not None:
+            self.opcode = opcode
+            self.set_parameters(**parameters)
         self.parser.update_format_length(self)
 
     def __repr__(self):
@@ -71,6 +79,18 @@ class Instruction:
         s = s.replace('\n', '\n  ')
         return s
 
+    def set_script(self, script):
+        if self.script is not None and self in self.script.instructions:
+            return
+        self.script = script
+        if self.start_address is None:
+            if self.script.instructions:
+                self.start_address = max(i.start_address
+                                         for i in self.script.instructions) + 1
+            else:
+                self.start_address = 1
+        self.script.instructions.append(self)
+
     def read_from_data(self):
         self.start_address = self.parser.data.tell()
         opcode = self.parser.data.read(self.parser.config['opcode_size'])
@@ -79,7 +99,7 @@ class Instruction:
         self.opcode = opcode
 
         if self.opcode not in self.parser.config['instructions']:
-            import pdb; pdb.set_trace()
+            raise Exception(f'Undefined opcode: {opcode:x}')
 
         if 'parameters' not in self.manifest:
             parameter_order = []
@@ -115,6 +135,42 @@ class Instruction:
         self.text_parameters = text_parameters
         self.end_address = self.parser.data.tell()
 
+    def set_parameters(self, **kwargs):
+        if not hasattr(self, 'parameters'):
+            self.parameters = {}
+        if not hasattr(self, 'text_parameters'):
+            self.text_parameters = {}
+        for parameter_name, value in kwargs.items():
+            assert value is not None
+            pmani = self.manifest['parameters'][parameter_name]
+            is_text = 'is_text' in pmani and pmani['is_text']
+            if is_text and isinstance(value, str):
+                self.text_parameters[parameter_name] = value
+                continue
+            if not is_text:
+                if 'track_pointer' in pmani and pmani['track_pointer']:
+                    assert isinstance(value, self.parser.TrackedPointer)
+                else:
+                    assert not isinstance(value, self.parser.TrackedPointer)
+            self.parameters[parameter_name] = value
+            if is_text and parameter_name not in self.text_parameters:
+                self.text_parameters[parameter_name] = None
+
+    def update_text(self, text, parameter_name=None):
+        if parameter_name is None:
+            if hasattr(self, 'previous_text_update'):
+                parameter_name = self.previous_text_update
+            else:
+                return False
+        if parameter_name not in self.text_parameters:
+            return False
+        old_text = self.text_parameters[parameter_name]
+        if old_text is None:
+            self.text_parameters[parameter_name] = text
+        else:
+            self.text_parameters[parameter_name] = '\n'.join([old_text, text])
+        return True
+
     @property
     def format(self):
         parameters = []
@@ -141,6 +197,10 @@ class Instruction:
 
     @property
     def parser(self):
+        if hasattr(self, '_parser'):
+            if self.script is not None:
+                assert self.script.parser is self._parser
+            return self._parser
         return self.script.parser
 
     @property
@@ -150,7 +210,7 @@ class Instruction:
     @property
     def references(self):
         return [v for (k, v) in self.parameters.items()
-                if isinstance(v, TrackedPointer)]
+                if isinstance(v, self.parser.TrackedPointer)]
 
     @property
     def is_terminator(self):
@@ -334,6 +394,33 @@ class Parser:
     def get_text(self, value, instruction):
         raise NotImplementedError
 
+    def read_script(self, pointer):
+        script = self.Script(pointer=pointer, parser=self)
+        self.data.seek(pointer.converted)
+        while True:
+            instruction = self.Instruction(script=script)
+            if instruction.is_terminator:
+                break
+        return script
+
+    def read_scripts(self):
+        if not hasattr(self, 'scripts'):
+            self.scripts = {}
+        while True:
+            old_pointers = frozenset(self.pointers)
+            updated = False
+            for p, pointer in sorted(self.pointers.items()):
+                if p in self.scripts:
+                    continue
+                if pointer not in self.script_pointers:
+                    continue
+                updated = True
+                self.scripts[p] = self.read_script(pointer)
+                if self.pointers != old_pointers:
+                    break
+            if not updated:
+                break
+
     def format_opcode(self, opcode):
         length = self.config['opcode_size'] * 2
         return ('{0:0>%sx}' % length).format(opcode)
@@ -362,24 +449,123 @@ class Parser:
                        for line in lines[1:]]
         return '\n'.join([first_line] + other_lines)
 
-    def interpret_opcode(self, opcode):
-        raise NotImplementedError
-
-    def interpret_parameter(self, parameter):
-        raise NotImplementedError
-
-    def interpret_pointer(self, pointer):
-        raise NotImplementedError
-
-    def interpret_text(self, text):
-        raise NotImplementedError
-
     def update_format_length(self, instruction):
         length = len(instruction.format)
         if hasattr(self, 'format_length'):
             self.format_length = max(length, self.format_length)
         else:
             self.format_length = length
+
+    def interpret_opcode(self, opcode):
+        opcode = int(opcode, 0x10)
+        if opcode in self.config['instructions']:
+            return opcode
+        return None
+
+    def interpret_parameter(self, parameter):
+        if parameter.startswith('@'):
+            return self.interpret_pointer(parameter)
+        else:
+            try:
+                return int(parameter, 0x10)
+            except ValueError:
+                return None
+
+    def interpret_pointer(self, pointer):
+        pointer = pointer.split('#')[0].strip()
+        if pointer.startswith('@'):
+            try:
+                pointer = int(pointer[1:], 0x10)
+                return self.get_tracked_pointer(pointer)
+            except ValueError:
+                return None
+
+    def interpret_instruction(self, line):
+        line = line.split('#')[0].strip()
+        if line.count(':') != 1:
+            return None
+        opcode, parameters = line.split(':')
+        assert opcode.count('.') <= 1
+        line_number = None
+        if '.' in opcode:
+            line_number, opcode = opcode.split('.')
+            line_number = int(line_number.strip(), 0x10)
+        opcode = self.interpret_opcode(opcode.strip())
+        if opcode is None:
+            return None
+        manifest = self.config['instructions'][opcode]
+        parameters = parameters.replace(' ', '').strip()
+        if parameters:
+            parameters = parameters.split(',')
+        else:
+            parameters = []
+        if 'parameters' in manifest:
+            if len(parameters) != len(manifest['parameters']):
+                return None
+        elif parameters:
+            return None
+        parameters = [self.interpret_parameter(parameter)
+                      for parameter in parameters]
+        if len(parameters) > 1:
+            parameter_order = manifest['parameter_order']
+        elif parameters:
+            parameter_order = list(manifest['parameters'].keys())
+            parameters = dict(zip(parameter_order, parameters))
+        else:
+            parameters = {}
+        try:
+            i = self.Instruction(opcode=opcode, parameters=parameters,
+                                 parser=self)
+        except:
+            return None
+        if line_number is not None:
+            i.start_address = line_number
+        return i
+
+    def interpret_text(self, text, instruction):
+        text = text.strip()
+        for parameter_name in instruction.text_parameters:
+            if text.startswith(f'{parameter_name}:'):
+                text = text.split(':', 1)[1].strip()
+                break
+        else:
+            parameter_name = None
+        if not (text.startswith('|') and text.endswith('|')):
+            return None
+        text = text[1:-1]
+        return instruction.update_text(text, parameter_name=parameter_name)
+
+    def import_script(self, script_text):
+        current_script = None
+        for line in script_text.split('\n'):
+            line = line.strip()
+            if line.startswith('#'):
+                continue
+            if not line:
+                continue
+            result = self.interpret_pointer(line)
+            if result:
+                if result.pointer in self.scripts:
+                    current_script = self.scripts[result.pointer]
+                    current_script.instructions = []
+                else:
+                    current_script = self.Script(pointer=result, parser=self)
+                    self.scripts[result.pointer] = current_script
+                assert current_script is self.scripts[result.pointer]
+                continue
+            if current_script:
+                result = self.interpret_instruction(line)
+                if result:
+                    result.set_script(current_script)
+                    continue
+            prev_instruction = None
+            if current_script and current_script.instructions:
+                prev_instruction = current_script.instructions[-1]
+            if prev_instruction and prev_instruction.text_parameters:
+                result = self.interpret_text(line, prev_instruction)
+                if result:
+                    continue
+            raise Exception(f'Unable to interpret "{line}"')
 
     def text_to_parameter_bytecode(self, parameter_name, instruction):
         raise NotImplementedError
@@ -467,7 +653,6 @@ class Parser:
             elif chosen.bytecode in bytecode:
                 repointer = bytecode.index(chosen.bytecode) | \
                         chosen.pointer.virtual_address
-                import pdb; pdb.set_trace()
             else:
                 bytecode.seek(0, SEEK_END)
                 repointer = bytecode.tell() | chosen.pointer.virtual_address
@@ -488,33 +673,6 @@ class Parser:
 
     def to_bytecode(self):
         raise NotImplementedError
-
-    def read_script(self, pointer):
-        script = self.Script(pointer=pointer, parser=self)
-        self.data.seek(pointer.converted)
-        while True:
-            instruction = self.Instruction(script=script)
-            if instruction.is_terminator:
-                break
-        return script
-
-    def read_scripts(self):
-        if not hasattr(self, 'scripts'):
-            self.scripts = {}
-        while True:
-            old_pointers = frozenset(self.pointers)
-            updated = False
-            for p, pointer in sorted(self.pointers.items()):
-                if p in self.scripts:
-                    continue
-                if pointer not in self.script_pointers:
-                    continue
-                updated = True
-                self.scripts[p] = self.read_script(pointer)
-                if self.pointers != old_pointers:
-                    break
-            if not updated:
-                break
 
 
 if __name__ == '__main__':
