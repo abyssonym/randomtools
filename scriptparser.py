@@ -508,6 +508,7 @@ class Parser:
                       for parameter in parameters]
         if len(parameters) > 1:
             parameter_order = manifest['parameter_order']
+            parameters = dict(zip(parameter_order, parameters))
         elif parameters:
             parameter_order = list(manifest['parameters'].keys())
             parameters = dict(zip(parameter_order, parameters))
