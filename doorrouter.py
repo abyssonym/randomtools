@@ -1657,13 +1657,19 @@ class Graph(RollbackMixin):
                         frozenset(self.expand_requirements(requirements))
                 continue
 
+            for definition_label in self.definitions:
+                if definition_label in line:
+                    sub = self.definitions[definition_label]
+                    if len(sub) == 1:
+                        sub = list(sub)[0]
+                        if len(sub) == 1:
+                            sub = list(sub)[0]
+                            test = [sub if w == definition_label else w
+                                    for w in line.split()]
+                            line = ' '.join(test)
+
             if line.startswith('.start'):
                 _, root_label = line.split(' ')
-                if root_label in self.definitions:
-                    temp = self.definitions[root_label]
-                    assert len(temp) == 1
-                    assert isinstance(list(temp)[0], frozenset)
-                    (root_label,), = temp
                 self.set_root(self.get_by_label(root_label))
                 continue
 
