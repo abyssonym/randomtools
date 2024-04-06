@@ -129,7 +129,7 @@ class Graph(RollbackMixin):
             return rtype
 
         @classmethod
-        def from_line(self, line, parent):
+        def from_line(self, line, parent, autoadd=True):
             while '  ' in line:
                 line = line.replace('  ', ' ')
             line = line.strip()
@@ -147,6 +147,8 @@ class Graph(RollbackMixin):
 
             if arguments is None:
                 req = rtype(parent, label)
+                if autoadd:
+                    parent.requirements.add(req)
                 return req
 
             nodesets = rtype.preprocess_arguments(parent, arguments)
@@ -159,11 +161,16 @@ class Graph(RollbackMixin):
                 req = req.reformat()
                 reqs.append(req)
             if len(reqs) == 1:
-                return reqs[0]
+                req = reqs[0]
+                if autoadd:
+                    parent.requirements.add(req)
+                return req
             joiner = self.get_rtype_from_directive(rtype.JOINER)
             joiner = joiner(parent, None, None)
             for req in reqs:
                 joiner.add_requirement(req)
+            if autoadd:
+                parent.requirements.add(joiner)
             return joiner
 
     class ComplexRequirement(Requirement):
@@ -221,10 +228,19 @@ class Graph(RollbackMixin):
             if not self.nodeset <= self.parent.rooted:
                 raise DoorRouterException(
                     f'Node {self.node} requires {self.nodeset}.')
-            for n in self.nodeset:
-                if self.node in n.guaranteed:
+            for r in self.nodeset:
+                if self.node in r.guaranteed:
                     raise DoorRouterException(
-                        f'Node {n} cannot be reached without {self.node}.')
+                        f'Node {r} cannot be reached without {self.node}.')
+                corequiring = {req.node for req in self.parent.requirements
+                               if isinstance(req, Graph.Require)
+                               and req.node.rooted and r in req.nodeset}
+                shortest = r.get_shortest_path(avoid_nodes=corequiring)
+                if len(corequiring) == 1:
+                    assert shortest
+                if not shortest:
+                    raise DoorRouterException(
+                            f'Nodes {corequiring} require {r}.')
 
     class Guarantee(Requirement):
         DIRECTIVE = 'guarantee'
@@ -700,8 +716,11 @@ class Graph(RollbackMixin):
         def dependencies(self):
             dependencies = set()
             for req in self.parent.requirements:
-                if req.node is self and \
-                        type(req) in (Graph.Require, Graph.Guarantee):
+                if not req.node is self:
+                    continue
+                if type(req) in (Graph.Require, Graph.Guarantee):
+                    dependencies |= req.nodeset
+                if isinstance(req, Graph.Bridge) and len(req.nodeset) == 1:
                     dependencies |= req.nodeset
             return dependencies
 
@@ -1791,17 +1810,6 @@ class Graph(RollbackMixin):
                     raise DoorRouterException(
                         f'Node {self} can not be required by any other node.')
 
-        def verify(self):
-            try:
-                #self.verify_required()
-                #self.verify_guarantee()
-                #self.verify_missable()
-                #self.verify_orphanless()
-                pass
-            except:
-                import pdb; pdb.set_trace()
-            #self.verify_bridge()
-
     def __init__(self, filename=None, config=None, preset_connections=None,
                  strict_validator=None, lenient_validator=None,
                  testing=False, do_reduce=None, parent=None,
@@ -1928,6 +1936,7 @@ class Graph(RollbackMixin):
         self.conditionless_edges = set()
         self.connectable = set()
         self.conditional_nodes = set()
+        self.all_dependencies = set()
         self.problematic_nodes = defaultdict(int)
         self.num_loops = -1
         self.definitions = {}
@@ -2029,7 +2038,7 @@ class Graph(RollbackMixin):
                         break
 
             if line.startswith('.'):
-                req = self.Requirement.from_line(line, self)
+                req = self.Requirement.from_line(line, self, autoadd=False)
                 if req is not None:
                     if complex_requirement is not None:
                         assert complex_requirement in self.requirements
@@ -2064,7 +2073,6 @@ class Graph(RollbackMixin):
                 if a == b:
                     req = self.Requirement.from_line(
                         f'.tag {a} {conditions_label}', self)
-                    self.requirements.add(req)
             self.add_multiedge(edge, conditions)
 
         difficult_nodes = {n for req in self.requirements
@@ -2199,7 +2207,6 @@ class Graph(RollbackMixin):
             if len(reduced & self.unconnected) >= num_nodes:
                 break
 
-        self.all_dependencies = set()
         assert not reduced & too_complex
         for n in reduced:
             assert n.dependencies <= reduced
@@ -2621,13 +2628,11 @@ class Graph(RollbackMixin):
                     b.add_edges(a, conditions)
                     req = self.Requirement.from_line(
                             f'.bridge {b} {a}', self)
-                    self.requirements.add(req)
                     #b.force_bridge = frozenset(b.force_bridge | {a})
                 elif operator == '>>':
                     edges = a.add_edges(b, conditions, questionable=True)
                     req = self.Requirement.from_line(
                             f'.require {a} {b}', self)
-                    self.requirements.add(req)
                     #a.add_required(b)
                 elif operator == '=':
                     if a is b and len(aa) == len(bb) == 1 \
@@ -3114,12 +3119,6 @@ class Graph(RollbackMixin):
             self.verify_edges()
             self.verify_frozensets()
             self.verify_guar_to()
-        for n in sorted(self.nodes, key=lambda n: n.label):
-            try:
-                n.verify()
-            except DoorRouterException as error:
-                self.problematic_nodes[n] += 1
-                raise error
         for req in self.requirements:
             req.verify()
         self.verify_no_return()

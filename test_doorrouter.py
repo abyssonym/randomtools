@@ -1302,7 +1302,7 @@ def test_graph_reduction07():
 def test_graph_reduction08():
     g = get_graph()
     g.reduce = False
-    g.by_label('c').add_guarantee(frozenset({g.by_label('b')}))
+    g.Requirement.from_line('.guarantee c b', g)
     g.add_edge('root', 'a', directed=False)
     g.add_edge('a', 'b', directed=False)
     g.add_edge('a', 'c', directed=False)
@@ -1314,7 +1314,7 @@ def test_graph_reduction08():
 def test_graph_reduction09():
     g = get_graph()
     g.reduce = True
-    g.by_label('c').add_guarantee(frozenset({g.by_label('b')}))
+    g.Requirement.from_line('.guarantee c b', g)
     g.add_edge('root', 'a', directed=False)
     g.add_edge('a', 'b', directed=False)
     g.add_edge('a', 'c', directed=False)
@@ -2487,8 +2487,8 @@ def test_required_nodes1():
     g.add_edge('x', 'z')
     g.add_edge('y', 'z')
     g.add_edge('z', 'root')
-    g.by_label('x').add_required(g.by_label('z'))
-    g.by_label('y').add_required(g.by_label('z'))
+    g.Requirement.from_line('.require x z', g)
+    g.Requirement.from_line('.require y z', g)
     try:
         g.rooted
     except DoorRouterException:
@@ -2505,7 +2505,7 @@ def test_required_nodes2():
     g.add_edge('a', 'b', condition='y')
     g.add_edge('b', 'y')
     g.add_edge('y', 'root')
-    g.by_label('x').add_required(g.by_label('y'))
+    g.Requirement.from_line('.require x y', g)
     try:
         g.rooted
     except DoorRouterException:
@@ -2562,8 +2562,8 @@ def test_double_required():
     g.add_edge('a', 'c')
     g.add_edge('b', 'c')
     g.add_edge('c', 'root')
-    g.by_label('a').add_required(g.by_label('c'))
-    g.by_label('b').add_required(g.by_label('c'))
+    g.Requirement.from_line('.require a c', g)
+    g.Requirement.from_line('.require b c', g)
     try:
         g.verify()
     except DoorRouterException as e:
