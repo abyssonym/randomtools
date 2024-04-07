@@ -1841,18 +1841,62 @@ class Graph(RollbackMixin):
         self.unconnected = self.connectable - {
                 self.get_by_label(l) for l in self.preset_connections.keys()}
 
+        newlines = []
         for line in lines:
             while '  ' in line:
                 line = line.replace('  ', ' ')
+            newlines.append(line.strip())
+        lines = newlines
 
+        predefinitions = {}
+        for line in lines:
+            if not line.startswith('.def'):
+                continue
+
+            _, definition_label, requirements = line.split(' ')
+            if definition_label in self.definition_overrides:
+                predefinitions[definition_label] = \
+                        self.definition_overrides[definition_label]
+            else:
+                predefinitions[definition_label] = requirements
+
+        dependencies = defaultdict(set)
+        for key1, value in predefinitions.items():
+            for key2 in sorted(predefinitions.keys(),
+                               key=lambda k2: (-len(k2), k2)):
+                if key1 == key2:
+                    continue
+                if key2 in value:
+                    value = value.replace(key2, '')
+                    dependencies[key1].add(key2)
+
+        while True:
+            updated = False
+            for key1 in sorted(dependencies):
+                for key2 in sorted(dependencies[key1]):
+                    if key1 in dependencies[key2]:
+                        raise Exception(f'Circular dependency: {key1}, {key2}')
+                    if dependencies[key2] - dependencies[key1]:
+                        dependencies[key1] |= dependencies[key2]
+                        updated = True
+            if not updated:
+                break
+
+        assert len(self.definitions) == 0
+        while True:
+            done_definitions = set(self.definitions.keys())
+            if done_definitions >= set(predefinitions.keys()):
+                break
+            nextdefs = {d for d in predefinitions
+                        if dependencies[d] <= done_definitions}
+            nextdefs -= done_definitions
+            assert nextdefs
+            for d in nextdefs:
+                self.definitions[d] = frozenset(
+                        self.expand_labels(predefinitions[d]))
+
+        for line in lines:
             if line.startswith('.def'):
-                _, definition_label, requirements = line.split(' ')
-                assert definition_label not in self.definitions
-                if self.definition_overrides and \
-                        definition_label in self.definition_overrides:
-                    requirements = self.definition_overrides[definition_label]
-                self.definitions[definition_label] = \
-                        frozenset(self.expand_labels(requirements))
                 continue
 
             for definition_label in self.definitions:
@@ -2005,10 +2049,11 @@ class Graph(RollbackMixin):
         num_nodes = int(round(self.config['map_size'] * len(self.unconnected)))
         reduced = necessary_nodes & self.unconnected
         too_complex = set()
-        for n in sorted(difficult_nodes):
+        for n in sorted(difficult_nodes - necessary_nodes):
             if random.random() > self.config['skip_complex_nodes']:
                 continue
             too_complex.add(n)
+        assert not too_complex & necessary_nodes
 
         while True:
             old = set(too_complex)
@@ -2086,6 +2131,7 @@ class Graph(RollbackMixin):
         assert self.unconnected <= self.allow_connecting <= \
                 self.connectable <= self.nodes
         del(self._property_cache)
+        assert self.unconnected & self.rooted
         self.verify()
         self.commit()
 

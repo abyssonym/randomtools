@@ -266,6 +266,17 @@ class Script:
     def bytecode(self):
         return self.parser.script_to_bytecode(self)
 
+    def insert_instruction(self, index, text):
+        instruction = self.parser.interpret_instruction(text)
+        instruction.start_address = 0
+        self.instructions.insert(index, instruction)
+
+    def append_instruction(self, text):
+        self.insert_instruction(len(self.instructions), text)
+
+    def prepend_instruction(self, text):
+        self.insert_instruction(0, text)
+
 
 class Parser:
     Script = Script
