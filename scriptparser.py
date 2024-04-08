@@ -134,6 +134,7 @@ class Instruction:
         self.parameters = parameters
         self.text_parameters = text_parameters
         self.end_address = self.parser.data.tell()
+        self.parser.log_read_data(self.start_address, self.end_address)
 
     def set_parameters(self, **kwargs):
         if not hasattr(self, 'parameters'):
@@ -186,12 +187,19 @@ class Instruction:
         parameters = dict(self.parameters)
         for parameter_name in set(parameters.keys()):
             pmani = self.manifest['parameters'][parameter_name]
+            prettified = None
+            prettify_table = None
             if 'prettify' in pmani:
+                prettify_table = pmani['prettify']
+            if prettify_table is None and 'prettify' in self.parser.config \
+                    and parameter_name in self.parser.config['prettify']:
+                prettify_table = self.parser.config['prettify'][parameter_name]
+            if prettify_table is not None:
                 value = parameters[parameter_name]
-                if value in pmani['prettify']:
-                    prettified = pmani['prettify'][value].format(**parameters)
-                else:
-                    prettified = pmani['prettify'][-1].format(**parameters)
+                if value not in prettify_table:
+                    value = -1
+                prettified = prettify_table[value].format(**parameters)
+            if prettified is not None:
                 parameters[f'_pretty_{parameter_name}'] = prettified
         return self.manifest['comment'].format(**parameters)
 
@@ -211,6 +219,11 @@ class Instruction:
     def references(self):
         return [v for (k, v) in self.parameters.items()
                 if isinstance(v, self.parser.TrackedPointer)]
+
+    @property
+    def referenced_scripts(self):
+        return [self.parser.scripts[r.pointer] for r in self.references
+                if r.pointer in self.parser.scripts]
 
     @property
     def is_terminator(self):
@@ -283,7 +296,7 @@ class Parser:
     Instruction = Instruction
     TrackedPointer = TrackedPointer
 
-    def __init__(self, config_filename, data, pointers):
+    def __init__(self, config_filename, data, pointers, log_reads=False):
         with open(config_filename) as f:
             self.config = yaml.safe_load(f.read())
         if not isinstance(data, bytes):
@@ -293,12 +306,50 @@ class Parser:
         self.data = BytesIO(data)
         self.original_data = self.data.read()
         self.data.seek(0)
+        self.log_reads = log_reads
+        self.readlog = None
+        if self.log_reads:
+            self.readlog = BytesIO(bytes(len(self.original_data)))
         self.pointers = {}
         self.script_pointers = set()
         for p in pointers:
             self.add_pointer(p, script=True)
         self.get_text_decode_table()
         self.read_scripts()
+
+    def log_read_data(self, start, finish):
+        if not self.log_reads:
+            return
+        assert start <= finish
+        self.readlog.seek(start)
+        self.readlog.write(b'\xff' * (finish-start))
+        assert self.readlog.tell() == finish
+        self.readlog.seek(0)
+
+    def get_unread_data(self):
+        self.readlog.seek(0)
+        data = BytesIO(self.original_data)
+        data.seek(0)
+        unread_data = {}
+        current_segment = b''
+        current_pointer = 0
+        while True:
+            peek = self.readlog.read(1)
+            if len(peek) == 0:
+                break
+            if peek == b'\x00':
+                if not current_segment:
+                    current_pointer = self.readlog.tell() - 1
+                data.seek(self.readlog.tell() - 1)
+                current_segment += data.read(1)
+            elif peek == b'\xff':
+                if current_segment:
+                    unread_data[current_pointer] = current_segment
+                    current_segment = b''
+        if current_segment:
+            unread_data[current_pointer] = current_segment
+            current_segment = b''
+        return unread_data
 
     def get_tracked_pointer(self, pointer, virtual_address=None, script=False):
         if pointer in self.pointers:
@@ -362,6 +413,7 @@ class Parser:
                 decoded += '{%s}' % word
             if value in self.config['text_terminators']:
                 break
+        self.log_read_data(pointer, data.tell())
         data.seek(address)
         return decoded
 
