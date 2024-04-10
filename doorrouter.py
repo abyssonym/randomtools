@@ -58,13 +58,11 @@ class RollbackMixin:
 
 class Graph(RollbackMixin):
     ROLLBACK_ATTRIBUTES = {
-        'all_edges', 'conditionless_edges',
-        'nodes_by_rank', 'nodes_by_rank_or_less', 'unconnected',
+        'all_edges', 'conditionless_edges', '_conditional_edges',
+        'conditional_nodes', 'unconnected',
         '_reachable_from_root', '_root_reachable_from',
         '_edge_reachable_from_root',
-        'fg_simplify_cache',
-        '_conditional_edges',
-        'conditional_nodes', 'reduced_graph',
+        'reduced_graph', 'fg_simplify_cache',
         }
 
     class Requirement:
@@ -2223,23 +2221,6 @@ class Graph(RollbackMixin):
             self.rerank()
 
         self.cleanup_guarantees()
-
-        unranked = [n for n in rfr if n.rank is None]
-        ranks = sorted(n.rank for n in rfr)
-        nodes_by_rank_or_less = set()
-        self.nodes_by_rank = defaultdict(set)
-        self.nodes_by_rank_or_less = defaultdict(set)
-        for n in rfr:
-            self.nodes_by_rank[n.rank].add(n)
-        for r1 in sorted(self.nodes_by_rank):
-            for r2 in sorted(self.nodes_by_rank):
-                if r1 > r2:
-                    continue
-                self.nodes_by_rank_or_less[r2] |= self.nodes_by_rank[r1]
-        self.nodes_by_rank = {
-                k: frozenset(v) for (k, v) in self.nodes_by_rank.items()}
-        self.nodes_by_rank_or_less = {k: frozenset(v) for (k, v) in
-                                      self.nodes_by_rank_or_less.items()}
 
         assert self.root in self.reachable_from_root
         assert self.root in self.root_reachable_from
