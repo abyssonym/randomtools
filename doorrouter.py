@@ -1760,10 +1760,6 @@ class Graph(RollbackMixin):
             value = len({e for e in self.all_edges if (not e.generated)
                          and e.pair and e.source < e.destination})
             s += f'  {key:21} {value}\n'
-            key = 'trap doors:'
-            value = len({e for e in self.all_edges if e.generated and
-                         e.source is not e.destination and not e.soft_pairs})
-            s += f'  {key:21} {value}\n'
             key = 'generation loops:'
             value = self.num_loops
             s += f'  {key:21} {value}\n'
@@ -3057,57 +3053,10 @@ class Graph(RollbackMixin):
         a = options[index]
         others = set(n for n in self.unconnected
                      if a.check_tag_compatibility(n))
+        others.discard(a)
 
-        '''
-        done_nodes = set()
-        if self.config['goal_based_missables']:
-            missable_goals = self.goal_nodes
-        else:
-            missable_goals = self.goal_nodes | self.rooted
-        for b in sorted(others):
-            if b in done_nodes:
-                continue
-            guarantee = set()
-            for n in b.free_travel_nodes:
-                if n.guarantee_nodesets:
-                    guarantee |= frozenset.intersection(*n.guarantee_nodesets)
-                for ns in n.missable_nodesets:
-                    if ns <= missable_goals:
-                        guarantee |= ns
-            guarantee -= b.free_travel_nodes
-            if not guarantee <= a.guaranteed:
-                others -= b.free_travel_nodes
-            done_nodes |= b.free_travel_nodes
-
-        done_nodes = set(self.rooted)
-        for b in sorted(others):
-            if b in done_nodes:
-                continue
-            for n in b.free_travel_nodes:
-                if not n.required_nodes:
-                    continue
-                if n.required_nodes - (self.rooted | b.connected_nodes):
-                    others -= b.free_travel_nodes
-                    break
-            done_nodes |= b.free_travel_nodes
-        '''
-
-        if len(others) == 0 or \
-                (others == {a} and not self.config['trap_doors']):
+        if not others:
             raise DoorRouterException(f'Node {a} has no connectable options.')
-
-        '''
-        if a in enemy_nodes:
-            enemies = enemy_nodes[a] - {a}
-            temp = others - enemies
-            if temp:
-                others = temp
-        '''
-
-        if random.random() > self.config['trap_doors']:
-            others.discard(a)
-        else:
-            others.add(a)
 
         if a in strict_candidates:
             others &= strict_candidates[a]
@@ -3163,44 +3112,6 @@ class Graph(RollbackMixin):
         self.unconnected |= {a, b}
         log(f'REMOVE {a} {b}')
         self.previous_procedural_add_edge = None
-
-    def handle_trap_doors(self):
-        if self.config['trap_doors'] <= 0:
-            return
-        print('Adding trap doors...')
-        self.verify()
-        assert self.root_reachable_from >= self.reachable_from_root
-        edges = [e for e in self.all_edges if e.source.rooted]
-        trap_doors = [e for e in edges if e.source is e.destination]
-        to_remove = set()
-        for e in sorted(trap_doors):
-            if DEBUG:
-                self.verify()
-            self.rooted
-            rank = e.source.rank
-            candidates = sorted([
-                n for n in self.connectable
-                if n.rank is not None and n.rank <= rank
-                and n.twoway_conditions == e.source.twoway_conditions])
-            candidates.remove(e.source)
-            if not candidates:
-                log('NO TRAP CANDIDATES', e)
-                continue
-            new_destination = random.choice(candidates)
-            try:
-                new_edge = e.source.add_edge(new_destination,
-                                             procedural=True)
-                log(f'TRAP {new_edge}')
-                self.verify()
-                if self.reachable_from_root - self.root_reachable_from:
-                    raise DoorRouterException(str(new_edge))
-                to_remove.add(e)
-            except DoorRouterException:
-                new_edge.remove()
-        for e in to_remove:
-            e.remove()
-        assert self.root_reachable_from >= self.reachable_from_root
-        self.verify()
 
     def generate_solutions(self, goal_nodes=None):
         print('Generating solution paths...')
@@ -3566,10 +3477,6 @@ class Graph(RollbackMixin):
             log(report)
 
         print()
-        try:
-            self.handle_trap_doors()
-        except DoorRouterException as error:
-            raise DoorRouterException(f'Trap door routing failure: {error}')
 
     def build_graph(self):
         attempts = 0
