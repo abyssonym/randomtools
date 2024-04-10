@@ -542,13 +542,16 @@ def write_patch_line(outfile, address, code):
 
 
 def write_patch(outfile, patchfilename, parameters=None, mapping=None,
-                noverify=None, force=False):
+                noverify=None, validate=None, force=False):
     if patchfilename in ALREADY_PATCHED and not force:
         return
+    if validate is None:
+        validate = not noverify
     if noverify and patchfilename not in NOVERIFY_PATCHES:
         NOVERIFY_PATCHES.append(patchfilename)
     elif noverify is None and patchfilename in NOVERIFY_PATCHES:
         noverify = True
+
     patchpath = path.join(tblpath, patchfilename)
     pf = open(patchpath, 'r+b')
     magic_word = pf.read(5)
@@ -568,8 +571,8 @@ def write_patch(outfile, patchfilename, parameters=None, mapping=None,
                 create_psx_file_manager(outfile)
             f = get_open_file(filename, sandbox=True)
         f.seek(address)
-        validate = f.read(len(code))
-        if validate != code[:len(validate)]:
+        validation_str = f.read(len(code))
+        if validation_str != code[:len(validation)]:
             break
     else:
         # this patch has already been applied
@@ -589,11 +592,11 @@ def write_patch(outfile, patchfilename, parameters=None, mapping=None,
             f.seek(address)
 
             if patchdict is validation:
-                validate = f.read(len(code))
-                if validate != code[:len(validate)]:
+                validation_str = f.read(len(code))
+                if validation_str != code[:len(validation_str)]:
                     error = ('Patch %s-%x did not pass validation.'
                              % (patchfilename, address))
-                    if noverify:
+                    if not validate:
                         print('WARNING: %s' % error)
                     else:
                         raise Exception(error)
