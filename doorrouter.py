@@ -196,6 +196,11 @@ class Graph(RollbackMixin):
                     return
                 except DoorRouterException as e:
                     msgs.append(e.args[0])
+                except AssertionError as e:
+                    if e.args:
+                        msgs.append(e.args[0])
+                    else:
+                        msgs.append('AssertionError')
             msg = '\n'.join(msgs)
             raise DoorRouterException(msg)
 
