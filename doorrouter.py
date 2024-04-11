@@ -1871,25 +1871,6 @@ class Graph(RollbackMixin):
             logic_filename = path.join(tblpath, logic_filename)
             lines = read_lines_nocomment(logic_filename)
 
-        if self.infer_nodes:
-            for line in lines:
-                if line.startswith('.'):
-                    continue
-                line = line.split()[0]
-                for operator in ['>>', '=>', '<<', '<=', '=', '>', '<']:
-                    if operator in line:
-                        for n in line.split(operator):
-                            if '*' in n:
-                                continue
-                            if n.endswith('?'):
-                                n = n.rstrip('?')
-                            if self.get_by_label(n) is None:
-                                self.Node(n, self)
-                        break
-
-        self.unconnected = self.connectable - {
-                self.get_by_label(l) for l in self.preset_connections.keys()}
-
         newlines = []
         for line in lines:
             while '  ' in line:
@@ -1908,6 +1889,27 @@ class Graph(RollbackMixin):
                         self.definition_overrides[definition_label]
             else:
                 predefinitions[definition_label] = requirements
+
+        if self.infer_nodes:
+            for line in lines:
+                if line.startswith('.'):
+                    continue
+                line = line.split()[0]
+                for operator in ['>>', '=>', '<<', '<=', '=', '>', '<']:
+                    if operator in line:
+                        for n in line.split(operator):
+                            if '*' in n:
+                                continue
+                            if n.endswith('?'):
+                                n = n.rstrip('?')
+                            if n in predefinitions:
+                                continue
+                            if self.get_by_label(n) is None:
+                                self.Node(n, self)
+                        break
+
+        self.unconnected = self.connectable - {
+                self.get_by_label(l) for l in self.preset_connections.keys()}
 
         dependencies = defaultdict(set)
         for key1, value in predefinitions.items():
