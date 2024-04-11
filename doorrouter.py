@@ -197,11 +197,6 @@ class Graph(RollbackMixin):
                     return
                 except DoorRouterException as e:
                     msgs.append(e.args[0])
-                except AssertionError as e:
-                    if e.args:
-                        msgs.append(e.args[0])
-                    else:
-                        msgs.append('AssertionError')
             msg = '\n'.join(msgs)
             raise DoorRouterException(msg)
 
@@ -239,12 +234,12 @@ class Graph(RollbackMixin):
                     if r.rooted and r.rank < self.node.rank:
                         continue
                     raise DoorRouterException(
-                        f'Node {r} cannot be reached without {self.node}.')
+                        f'Node {r} not reachable without {self.node}.')
 
             for r in self.nodeset:
                 if self.node in r.guaranteed:
                     raise DoorRouterException(
-                        f'Node {r} cannot be reached without {self.node}.')
+                        f'Node {r} not reachable without {self.node}.')
 
                 corequiring = {req.node for req in self.parent.requirements
                                if isinstance(req, Graph.Require)
@@ -272,7 +267,7 @@ class Graph(RollbackMixin):
                     if r.rooted and r.rank < self.node.rank:
                         continue
                     raise DoorRouterException(
-                        f'Node {r} cannot be reached without {self.node}.')
+                        f'Node {r} not reachable without {self.node}.')
 
             if self.nodeset - self.node.guaranteed:
                 raise DoorRouterException(
@@ -444,20 +439,26 @@ class Graph(RollbackMixin):
         def verify(self):
             if not self.node.rooted:
                 return
-            rffn, erffn = self.from_node.get_guaranteed_reachable_only(
-                    strict=True)
-            if self.node not in rffn:
+            if not self.from_node.rooted:
                 raise DoorRouterException(
-                        f'{self.node} not reachable from {self.from_node}')
-            failure = self.from_node.guar_to[self.node] & self.nodeset
-            if failure:
+                        f'{self.node} not reachable from {self.from_node}.')
+            rfn = self.from_node.get_naive_avoid_reachable(
+                    seek_nodes={self.node}, avoid_nodes=self.nodeset,
+                    extra_satisfaction=set(self.from_node.guaranteed))
+            if self.node not in rfn:
                 raise DoorRouterException(
                         f'{self.node} not reachable from {self.from_node} '
-                        f'without {failure}.')
+                        f'without {self.nodeset}.')
+
+    class Dependency(Requirement):
+        DIRECTIVE = 'dependency'
+
+        def verify(self):
+            return
 
     REQUIREMENT_TYPES = [Require, Guarantee, Missable, Bridge, Orphanless,
                          Tag, Unreachable, Nongoal, ReachableFromWithout,
-                         ComplexOr, ComplexAnd]
+                         Dependency, ComplexOr, ComplexAnd]
 
     @total_ordering
     class Node(RollbackMixin):
@@ -791,7 +792,8 @@ class Graph(RollbackMixin):
             for req in self.parent.requirements:
                 if not req.node is self:
                     continue
-                if type(req) in (Graph.Require, Graph.Guarantee):
+                if type(req) in (Graph.Require, Graph.Guarantee,
+                                 Graph.Dependency):
                     dependencies |= req.nodeset
                 if isinstance(req, Graph.Bridge) and len(req.nodeset) == 1:
                     dependencies |= req.nodeset
@@ -1515,6 +1517,7 @@ class Graph(RollbackMixin):
 
         def get_shortest_path(self, other=None, extra_satisfaction=None,
                               avoid_nodes=None, avoid_edges=None):
+
             if other is None:
                 return self.parent.root.get_shortest_path(
                         other=self, extra_satisfaction=extra_satisfaction,
@@ -1697,7 +1700,6 @@ class Graph(RollbackMixin):
                     guaranteed = guar_to[e.source]
                     if e.is_satisfied_by(guaranteed | extra_satisfaction
                                          | reachable_from[e.source]):
-                        assert not guaranteed & avoid_nodes
                         nodes.add(e.destination)
                         done_edges.add(e)
                     else:
@@ -2075,13 +2077,14 @@ class Graph(RollbackMixin):
                             reachable.add(e.destination)
                 if reachable_from == old:
                     break
-            return reachable & reachable_from, necessary
+            return reachable_from, necessary
 
         necessary_nodes = set(self.goal_nodes)
         necessary_nodes.add(self.root)
         while True:
             old = set(necessary_nodes)
             for n in old:
+                necessary_nodes |= n.dependencies
                 reachable = mini_naive_reachable_from(n)
                 if self.root in reachable:
                     continue
@@ -3063,6 +3066,17 @@ class Graph(RollbackMixin):
 
     def verify_goal_connectable(self):
         assert self.connectable and self.root in self.connectable
+        satisfaction = set(self.allow_connecting)
+        while True:
+            old = set(satisfaction)
+            for n in old:
+                for e in n.edges:
+                    if e.destination in self.connectable:
+                        continue
+                    if e.true_condition <= satisfaction:
+                        satisfaction.add(e.destination)
+            if satisfaction == old:
+                break
         for g in self.goal_nodes:
             reachable_from = {g}
             while True:
@@ -3072,7 +3086,7 @@ class Graph(RollbackMixin):
                     break
                 for n in set(reachable_from):
                     for e in n.reverse_edges:
-                        if e.true_condition <= self.allow_connecting:
+                        if e.true_condition <= satisfaction:
                             if e.source not in reachable_from:
                                 reachable_from.add(e.source)
                                 updated = True
@@ -3163,6 +3177,7 @@ class Graph(RollbackMixin):
             all_edges = temp
         else:
             self.discourage_edges = set()
+
         assert all_edges
         all_edges = sorted(all_edges)
         random.shuffle(all_edges)
