@@ -184,6 +184,7 @@ class Graph(RollbackMixin):
 
         def add_requirement(self, req):
             self.requirements.add(req)
+            req.joiner = self
 
     class ComplexOr(ComplexRequirement):
         DIRECTIVE = 'or'
@@ -231,8 +232,7 @@ class Graph(RollbackMixin):
             if not self.nodeset <= self.parent.rooted:
                 raise DoorRouterException(
                     f'Node {self.node} requires {self.nodeset}.')
-            if hasattr(self.parent, 'theoretically_reachable'):
-                assert self.nodeset <= self.parent.theoretically_reachable
+            self.parent.check_theoretically_reachable(self.nodeset)
 
             if self.parent.config['lazy_complex_nodes']:
                 for r in self.nodeset:
@@ -265,8 +265,7 @@ class Graph(RollbackMixin):
         def verify(self):
             if not self.node.rooted:
                 return
-            if hasattr(self.parent, 'theoretically_reachable'):
-                assert self.nodeset <= self.parent.theoretically_reachable
+            self.parent.check_theoretically_reachable(self.nodeset)
 
             if self.parent.config['lazy_complex_nodes']:
                 for r in self.nodeset:
@@ -306,8 +305,9 @@ class Graph(RollbackMixin):
                 return
             edges = {e for e in self.node.reverse_edges
                      if e.source in self.nodeset}
-            if hasattr(self.parent, 'theoretically_reachable'):
-                assert self.nodeset & self.parent.theoretically_reachable
+            self.parent.check_theoretically_reachable(self.nodeset,
+                                                      partial=True)
+
             if self.parent.config['lazy_complex_nodes']:
                 for n in nodeset:
                     if n.rooted and n.rank < self.node.rank:
@@ -415,8 +415,49 @@ class Graph(RollbackMixin):
                 raise DoorRouterException(
                         f'{self.nodeset} should not be required for victory.')
 
+    class ReachableFromWithout(Requirement):
+        DIRECTIVE = 'reachable_from_without'
+
+        def __init__(self, parent, label, nodeset):
+            self.from_node = nodeset[0]
+            assert isinstance(nodeset, list)
+            assert len(nodeset) >= 2
+            nodeset = frozenset(nodeset[1:])
+            super().__init__(parent, label, nodeset)
+
+        @classmethod
+        def preprocess_arguments(self, parent, arguments):
+            from_nodes, avoid_nodes = arguments.split()
+            from_nodes = parent.expand_labels(from_nodes)
+            from_nodes = parent.label_sets_to_nodes(from_nodes)
+            avoid_nodes = parent.expand_labels(avoid_nodes)
+            avoid_nodes = parent.label_sets_to_nodes(avoid_nodes)
+            assert len(from_nodes) == 1
+            from_nodes = list(from_nodes)[0]
+            assert len(from_nodes) == 1
+            from_node = list(from_nodes)[0]
+            assert isinstance(from_node, Graph.Node)
+            arguments = [[from_node] + sorted(avoid_nodeset)
+                         for avoid_nodeset in avoid_nodes]
+            return arguments
+
+        def verify(self):
+            if not self.node.rooted:
+                return
+            rffn, erffn = self.from_node.get_guaranteed_reachable_only(
+                    strict=True)
+            if self.node not in rffn:
+                raise DoorRouterException(
+                        f'{self.node} not reachable from {self.from_node}')
+            failure = self.from_node.guar_to[self.node] & self.nodeset
+            if failure:
+                raise DoorRouterException(
+                        f'{self.node} not reachable from {self.from_node} '
+                        f'without {failure}.')
+
     REQUIREMENT_TYPES = [Require, Guarantee, Missable, Bridge, Orphanless,
-                         Tag, Unreachable, Nongoal, ComplexOr, ComplexAnd]
+                         Tag, Unreachable, Nongoal, ReachableFromWithout,
+                         ComplexOr, ComplexAnd]
 
     @total_ordering
     class Node(RollbackMixin):
@@ -697,7 +738,10 @@ class Graph(RollbackMixin):
         def __eq__(self, other):
             if self is other:
                 return True
-            assert isinstance(other, Graph.Node)
+            if not isinstance(other, Graph.Node):
+                if other == '`NEVER`':
+                    return False
+                assert isinstance(other, Graph.Node)
             if self.parent is not other.parent:
                 return False
             assert self.label != other.label
@@ -751,6 +795,8 @@ class Graph(RollbackMixin):
                     dependencies |= req.nodeset
                 if isinstance(req, Graph.Bridge) and len(req.nodeset) == 1:
                     dependencies |= req.nodeset
+                if isinstance(req, Graph.ReachableFromWithout):
+                    dependencies.add(req.from_node)
             return dependencies
 
         @cached_property
@@ -1833,6 +1879,8 @@ class Graph(RollbackMixin):
                         for n in line.split(operator):
                             if '*' in n:
                                 continue
+                            if n.endswith('?'):
+                                n = n.rstrip('?')
                             if self.get_by_label(n) is None:
                                 self.Node(n, self)
                         break
@@ -2131,8 +2179,10 @@ class Graph(RollbackMixin):
                 self.connectable <= self.nodes
         del(self._property_cache)
         assert self.unconnected & self.rooted
+
         self.verify()
         self.commit()
+
 
     def reinitialize(self):
         random.seed(self.seed)
@@ -2449,6 +2499,10 @@ class Graph(RollbackMixin):
         return frozenset(self.label_sets_to_nodes(ls) for ls in label_sets)
 
     def split_edgestr(self, edgestr, operator):
+        questionable = False
+        if edgestr.endswith('?'):
+            edgestr = edgestr[:-1]
+            questionable = True
         a, b = edgestr.split(operator)
         def handle_wildcard(n):
             if '*' not in n:
@@ -2478,7 +2532,7 @@ class Graph(RollbackMixin):
         bb = handle_wildcard(b)
         if aa is None or bb is None or not (aa and bb):
             raise Exception(f'{edgestr} contains unknown node.')
-        return aa, bb
+        return aa, bb, questionable
 
     def add_multiedge(self, edgestr, conditions=None):
         if conditions is None:
@@ -2497,7 +2551,7 @@ class Graph(RollbackMixin):
         for operator in ['=>', '>>', '=', '>']:
             if operator not in edgestr:
                 continue
-            aa, bb = self.split_edgestr(edgestr, operator)
+            aa, bb, questionable = self.split_edgestr(edgestr, operator)
             break
         else:
             raise Exception(f'Invalid multiedge: {edgestr}')
@@ -2507,8 +2561,8 @@ class Graph(RollbackMixin):
                 if a is b:
                     continue
                 if operator =='=>':
-                    a.add_edges(b, conditions)
-                    b.add_edges(a, conditions)
+                    a.add_edges(b, conditions, questionable=questionable)
+                    b.add_edges(a, conditions, questionable=questionable)
                     req = self.Requirement.from_line(
                             f'.bridge {b} {a}', self)
                 elif operator == '>>':
@@ -2516,10 +2570,10 @@ class Graph(RollbackMixin):
                     req = self.Requirement.from_line(
                             f'.require {a} {b}', self)
                 elif operator == '=':
-                    a.add_edges(b, conditions)
-                    b.add_edges(a, conditions)
+                    a.add_edges(b, conditions, questionable=questionable)
+                    b.add_edges(a, conditions, questionable=questionable)
                 elif operator == '>':
-                    a.add_edges(b, conditions)
+                    a.add_edges(b, conditions, questionable=questionable)
                 else:
                     raise Exception(f'Unhandled operator ({operator}).')
 
@@ -2936,6 +2990,15 @@ class Graph(RollbackMixin):
 
         if outfile is not None:
             outfile.close()
+
+    def check_theoretically_reachable(self, nodeset, partial=False):
+        if not hasattr(self, 'theoretically_reachable'):
+            return True
+        if partial and nodeset & self.theoretically_reachable:
+            return True
+        if nodeset <= self.theoretically_reachable:
+            return True
+        raise DoorRouterException(f'{nodeset} is IMPOSSIBLE to reach.')
 
     def verify_no_return(self):
         if not self.config['avoid_softlocks']:
