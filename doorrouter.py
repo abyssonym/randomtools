@@ -18,7 +18,7 @@ DEFAULT_CONFIG_FILENAME = path.join(MODULE_FILEPATH, 'default.doorrouter.yaml')
 
 
 def log(line):
-    if DEBUG or True:
+    if DEBUG:
         line = line.strip()
         print(line)
         stdout.flush()
