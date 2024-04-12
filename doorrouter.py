@@ -229,13 +229,6 @@ class Graph(RollbackMixin):
                     f'Node {self.node} requires {self.nodeset}.')
             self.parent.check_theoretically_reachable(self.nodeset)
 
-            if self.parent.config['lazy_complex_nodes']:
-                for r in self.nodeset:
-                    if r.rooted and r.rank < self.node.rank:
-                        continue
-                    raise DoorRouterException(
-                        f'Node {r} not reachable without {self.node}.')
-
             for r in self.nodeset:
                 if self.node in r.guaranteed:
                     raise DoorRouterException(
@@ -298,17 +291,18 @@ class Graph(RollbackMixin):
         def verify(self):
             if not self.node.rooted:
                 return
-            edges = {e for e in self.node.reverse_edges
-                     if e.source in self.nodeset}
-            self.parent.check_theoretically_reachable(self.nodeset,
-                                                      partial=True)
 
             if self.parent.config['lazy_complex_nodes']:
-                for n in nodeset:
+                for n in self.nodeset:
                     if n.rooted and n.rank < self.node.rank:
                         return
                 raise DoorRouterException(
                     f'Node {self.node} reachable from wrong direction.')
+
+            edges = {e for e in self.node.reverse_edges
+                     if e.source in self.nodeset}
+            self.parent.check_theoretically_reachable(self.nodeset,
+                                                      partial=True)
             if not edges & self.node.guaranteed_edges:
                 raise DoorRouterException(
                     f'Node {self.node} reachable from wrong direction.')
@@ -3130,13 +3124,20 @@ class Graph(RollbackMixin):
 
         enemy_nodes = set()
 
+        compatibility_dict = {}
+        for o in options:
+            others = set(n for n in self.unconnected
+                         if o.check_tag_compatibility(n)) - {o}
+            compatibility_dict[o] = others
+        temp = [o for o in options if compatibility_dict[o]]
+        if temp:
+            options = temp
         options = sorted(options, key=lambda o: (
             len(self.discourage_nodes[o]), o.random_sort_key, o))
         max_index = len(options)-1
         index = random.randint(random.randint(0, max_index), max_index)
         a = options[index]
-        others = set(n for n in self.unconnected
-                     if a.check_tag_compatibility(n))
+        others = compatibility_dict[a]
         others.discard(a)
 
         if not others:
