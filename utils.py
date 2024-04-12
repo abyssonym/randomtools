@@ -816,10 +816,17 @@ class fake_yaml:
             try:
                 return int(key)
             except ValueError:
-                pass
+                if key.startswith('"') and key.endswith('"'):
+                    key = key[1:-1]
+                if key.startswith("'") and key.endswith("'"):
+                    key = key[1:-1]
             return key
 
         def format_value(value):
+            if value.startswith('"') and value.endswith('"'):
+                return value[1:-1]
+            if value.startswith("'") and value.endswith("'"):
+                return value[1:-1]
             value = format_key(value)
             if isinstance(value, int):
                 return value
@@ -828,7 +835,9 @@ class fake_yaml:
             except ValueError:
                 pass
             if value.startswith('[') and value.endswith(']'):
-                return json.loads(value)
+                values = value[1:-1].split(',')
+                values = [v.strip() for v in values]
+                return [format_value(v) for v in values]
             if value.lower() in ('yes', 'true'):
                 return True
             if value.lower() in ('no', 'false'):
