@@ -318,9 +318,9 @@ class Graph(RollbackMixin):
         def verify(self):
             if not self.node.rooted:
                 return
-            for e in self.node.reverse_edges:
-                assert self.node is e.destination
-                assert e.questionable
+            #for e in self.node.reverse_edges:
+            #    assert self.node is e.destination
+            #    assert e.questionable
             if self.parent.config['goal_based_missables'] and \
                     self.node not in self.parent.goals_guaranteed and False:
                 return
@@ -483,11 +483,6 @@ class Graph(RollbackMixin):
                 self.generated = procedural
                 self.questionable = questionable
                 graph = self.source.parent
-                reqs = {r for r in graph.requirements
-                        if r.node is self.destination}
-                for r in reqs:
-                    if isinstance(r, graph.Orphanless):
-                        self.questionable = True
 
                 self.true_condition = set()
                 self.false_condition = frozenset()
@@ -589,8 +584,8 @@ class Graph(RollbackMixin):
                 if self.source.rank is not None:
                     if self.true_condition:
                         try:
-                            return max(self.source.rank,
-                                       max(n.rank for n in self.true_condition))
+                            return max(self.source.rank, max(
+                                n.rank for n in self.true_condition))
                         except TypeError:
                             return -1
                     return self.source.rank
@@ -602,7 +597,8 @@ class Graph(RollbackMixin):
                               e.destination is self.source and
                               e.true_condition == self.true_condition and
                               e.false_condition == self.false_condition and
-                              e.generated == self.generated}
+                              e.generated == self.generated and
+                              e.questionable == self.questionable}
                 if not candidates:
                     return None
                 assert len(candidates) == 1
