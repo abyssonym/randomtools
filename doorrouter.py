@@ -3204,7 +3204,7 @@ class Graph(RollbackMixin):
         bad_dependency_options = {o for o in dependency_options
                                   if not o.dependencies & self.rooted}
         options -= bad_dependency_options
-        if not options:
+        if not (options or self.config['no_logic']):
             raise DoorRouterException('No connectable options.')
 
         # filter by tags
@@ -3273,8 +3273,13 @@ class Graph(RollbackMixin):
         for o in old_others - others:
             self.discourage_nodes[o].add(a)
 
+        if self.config['no_logic']:
+            others = old_others
+
         if a in strict_candidates:
             others &= strict_candidates[a]
+
+        old_others = set(others)
 
         if not others:
             raise DoorRouterException(f'Node {a} has no connectable options.')
@@ -3309,6 +3314,9 @@ class Graph(RollbackMixin):
                     if connected & (want_nodes-self.goal_nodes):
                         import pdb; pdb.set_trace()
             others = temp
+
+        if self.config['no_logic']:
+            others = old_others
 
         if self.previous_procedural_add_edge and \
                 a in self.previous_procedural_add_edge:
@@ -3369,8 +3377,9 @@ class Graph(RollbackMixin):
                        if e.destination in e.source.dependencies}
 
         paths = {}
+        ignore_nodes = set()
         while True:
-            for n in sorted(goal_nodes, key=lambda n: n.rank):
+            for n in sorted(goal_nodes-ignore_nodes, key=lambda n: n.rank):
                 if n in paths:
                     continue
                 avoid_nodes = frozenset({a for a in self.nodes if
@@ -3381,7 +3390,10 @@ class Graph(RollbackMixin):
                 if paths[n] is None:
                     paths[n] = n.get_shortest_path(avoid_nodes=None,
                                                    avoid_edges=avoid_edges)
-                assert paths[n] is not None
+                assert self.config['no_logic'] or paths[n] is not None
+                if paths[n] is None:
+                    ignore_nodes.add(n)
+                    continue
                 for e in paths[n]:
                     for c in e.true_condition:
                         goal_nodes.add(c)
@@ -3390,7 +3402,7 @@ class Graph(RollbackMixin):
 
         abridged_paths = []
         seen_edges = set()
-        for n in sorted(goal_nodes, key=lambda n: (n.rank, n)):
+        for n in sorted(goal_nodes-ignore_nodes, key=lambda n: (n.rank, n)):
             if n is self.root:
                 continue
             path = paths[n]
