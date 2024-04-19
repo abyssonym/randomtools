@@ -297,7 +297,7 @@ class Parser:
     TrackedPointer = TrackedPointer
 
     def __init__(self, config_filename, data, pointers, log_reads=False):
-        with open(config_filename) as f:
+        with open(config_filename, encoding='utf8') as f:
             self.config = yaml.safe_load(f.read())
         if not isinstance(data, bytes):
             assert isinstance(data, str)

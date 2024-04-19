@@ -38,7 +38,7 @@ def clached_property(fn):
 
 def read_lines_nocomment(filename):
     lines = []
-    with open(filename) as f:
+    with open(filename, encoding='utf8') as f:
         for line in f:
             if '#' in line:
                 line, _ = line.split('#', 1)
