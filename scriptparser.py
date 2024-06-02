@@ -1,4 +1,4 @@
-from .utils import fake_yaml as yaml
+from .utils import cached_property, fake_yaml as yaml
 from collections import OrderedDict, defaultdict
 from io import BytesIO, SEEK_END
 from sys import argv
@@ -12,6 +12,15 @@ def hexify(s):
         w = ' '.join('{0:0>2x}'.format(c) for c in w)
         result.append(w)
     return ' '.join(result)
+
+
+def length_to_num_bits(length):
+    length = int(round(length * 10))
+    length_bytes = length // 10
+    length_bits = length % 10
+    assert 0 <= length_bits <= 7
+    num_bits = (length_bytes * 8) + length_bits
+    return num_bits
 
 
 class TrackedPointer:
@@ -56,10 +65,13 @@ class Instruction:
     def __init__(self, script=None, opcode=None, parameters=None, parser=None):
         self.start_address, self.end_address = None, None
         self.script = None
+        self.parameters = None
+        self.text_parameters = None
         if script is not None:
             self.set_script(script)
         if parser is not None:
             self._parser = parser
+        self.context = self.script.context
         if opcode is None and parameters is None:
             self.read_from_data()
         if opcode is not None and parameters is not None:
@@ -98,8 +110,13 @@ class Instruction:
                                 byteorder=self.parser.config['byte_order'])
         self.opcode = opcode
 
-        if self.opcode not in self.parser.config['instructions']:
-            raise Exception(f'Undefined opcode: {opcode:x}')
+        instructions = self.parser.get_instructions(context=self.context)
+        if self.opcode not in instructions:
+            msg = (f'Undefined opcode at @{self.start_address:x}: '
+                   f'{opcode:x} (context {self.context})')
+            print(msg)
+            import pdb; pdb.set_trace()
+            raise Exception(msg)
 
         if 'parameters' not in self.manifest:
             parameter_order = []
@@ -110,18 +127,64 @@ class Instruction:
 
         parameters = OrderedDict()
         text_parameters = OrderedDict()
+        total_bits = 0
+        block_lengths = []
+        block_indexes = {}
+        bit_offsets = {}
         for parameter_name in parameter_order:
             pmani = self.manifest['parameters'][parameter_name]
             length = pmani['length']
-            value = self.parser.data.read(length)
-            value = int.from_bytes(value,
-                                   byteorder=self.parser.config['byte_order'])
+            if length == 'variable':
+                block_lengths.append(total_bits)
+                block_indexes[parameter_name] = len(block_lengths)
+                block_lengths.append(parameter_name)
+                total_bits = 0
+                continue
+            block_indexes[parameter_name] = len(block_lengths)
+            bit_offsets[parameter_name] = total_bits
+            total_bits += length_to_num_bits(length)
+        block_lengths.append(total_bits)
+
+        blocks = []
+        for parameter_name in parameter_order:
+            block = None
+            pmani = self.manifest['parameters'][parameter_name]
+            length = pmani['length']
+            block_index = block_indexes[parameter_name]
+            if len(blocks) <= block_index:
+                block_length = block_lengths[block_index]
+                if isinstance(block_length, str):
+                    assert length == 'variable'
+                    block = self.parser.read_variable_length(self, parameters)
+                    if parameter_name in parameters:
+                        continue
+                else:
+                    assert isinstance(block_length, int)
+                    if block_length % 8:
+                        block_length += 8 - (block_length % 8)
+                    assert block_length % 8 == 0
+                    block_length //= 8
+                    block = self.parser.data.read(block_length)
+                blocks.append(block)
+            else:
+                block = blocks[block_index]
+
+            if length == 'variable':
+                value = block
+            else:
+                bit_offset = bit_offsets[parameter_name]
+                num_bits = length_to_num_bits(length)
+                mask = (2**num_bits)-1
+                assert set(f'{mask:b}') == {'1'}
+                value = int.from_bytes(
+                        block, byteorder=self.parser.config['byte_order'])
+                value >>= bit_offset
+                value &= mask
+                if 'unused' in parameter_name and value != 0:
+                    import pdb; pdb.set_trace()
+
             is_text = 'is_text' in pmani and pmani['is_text']
             if is_text:
-                address = self.parser.data.tell()
-                text_parameters[parameter_name] = \
-                        self.parser.get_text(value, self)
-                self.parser.data.seek(address)
                 parameters[parameter_name] = value
                 continue
             if 'track_pointer' in pmani and pmani['track_pointer']:
@@ -131,7 +194,17 @@ class Instruction:
                     self.parser.script_pointers.add(value)
             assert parameter_name not in parameters
             parameters[parameter_name] = value
+
         self.parameters = parameters
+        for parameter_name in parameter_order:
+            pmani = self.manifest['parameters'][parameter_name]
+            is_text = 'is_text' in pmani and pmani['is_text']
+            if not is_text:
+                continue
+            address = self.parser.data.tell()
+            text_parameters[parameter_name] = \
+                    self.parser.get_text(value, self)
+            self.parser.data.seek(address)
         self.text_parameters = text_parameters
         self.end_address = self.parser.data.tell()
         self.parser.log_read_data(self.start_address, self.end_address)
@@ -211,9 +284,26 @@ class Instruction:
             return self._parser
         return self.script.parser
 
-    @property
+    @cached_property
     def manifest(self):
-        return self.parser.config['instructions'][self.opcode]
+        instructions = self.parser.get_instructions(context=self.context)
+        manifest = instructions[self.opcode]
+        done_inheritance = set()
+        while 'inherit' in manifest:
+            inherit = manifest['inherit']
+            assert inherit not in done_inheritance
+            done_inheritance.add(inherit)
+            merge = instructions[inherit]
+            del(manifest['inherit'])
+            for key in merge:
+                if key not in manifest:
+                    manifest[key] = merge[key]
+            for parameter in merge['parameters']:
+                if parameter not in manifest['parameters']:
+                    manifest['parameters'][parameter] = \
+                            merge['parameters'][parameter]
+        assert 'inherit' not in manifest
+        return manifest
 
     @property
     def references(self):
@@ -239,6 +329,7 @@ class Script:
         self.pointer = pointer
         self.parser = parser
         self.instructions = []
+        self.parser.set_context(self)
 
     def __repr__(self):
         header = self.parser.format_pointer(self.pointer)
@@ -351,6 +442,16 @@ class Parser:
             current_segment = b''
         return unread_data
 
+    def set_context(self, script):
+        script.context = None
+        if 'default_context' in self.config:
+            script.context = self.config['default_context']
+
+    def get_instructions(self, context=None):
+        if context is not None:
+            return self.config['instructions'][context]
+        return self.config['instructions']
+
     def get_tracked_pointer(self, pointer, virtual_address=None, script=False):
         if pointer in self.pointers:
             return self.pointers[pointer]
@@ -457,11 +558,21 @@ class Parser:
     def get_text(self, value, instruction):
         raise NotImplementedError
 
+    def read_variable_length(self, instruction, parameters):
+        raise NotImplementedError
+
+    def get_next_instruction(self, script):
+        instruction = self.Instruction(script=script)
+        #print(instruction)
+        return instruction
+
     def read_script(self, pointer):
         script = self.Script(pointer=pointer, parser=self)
         self.data.seek(pointer.converted)
+        #print(hex(self.data.tell()))
         while True:
-            instruction = self.Instruction(script=script)
+            instruction = self.get_next_instruction(script=script)
+            #print(instruction)
             if instruction.is_terminator:
                 break
         return script
@@ -492,8 +603,30 @@ class Parser:
         pmani = instruction.manifest['parameters'][parameter_name]
         value = instruction.parameters[parameter_name]
         if isinstance(value, int):
-            length = pmani['length'] * 2
+            length = length_to_num_bits(pmani['length'])
+            length = length / 4
+            if length % 1:
+                length = int(length) + 1
+            else:
+                length = int(length)
             parameter = ('{0:0>%sx}' % length).format(value)
+        elif isinstance(value, bytes):
+            if parameter_name in instruction.text_parameters:
+                parameter = parameter_name
+            else:
+                parameter = ''.join(f'{c:0>2x}' for c in value)
+        elif isinstance(value, list):
+            if not value:
+                raise NotImplementedError
+            parameter_list = []
+            for v in value:
+                if isinstance(v, int):
+                    parameter_list.append(f'{v:x}')
+                elif isinstance(v, bytes):
+                    parameter_list.append(''.join(f'{c:0>2x}' for c in v))
+                else:
+                    parameter_list.append(str(v))
+            parameter = ','.join(parameter_list)
         else:
             parameter = str(value)
         return parameter
@@ -513,13 +646,23 @@ class Parser:
         return '\n'.join([first_line] + other_lines)
 
     def update_format_length(self, instruction):
-        length = len(instruction.format)
-        if hasattr(self, 'format_length'):
-            self.format_length = max(length, self.format_length)
-        else:
-            self.format_length = length
+        new_length = len(instruction.format)
+        if not hasattr(self, 'format_length'):
+            self.format_length = new_length
+        if new_length <= self.format_length:
+            return
+        lengths = [new_length]
+        for script in self.scripts.values():
+            for i in script.instructions:
+                lengths.append(len(i.format))
+        mean = sum(lengths) / len(lengths)
+        median = sorted(lengths)[len(lengths) >> 1]
+        deviation = sum((l-mean)**2 for l in lengths) / len(lengths)
+        threshold = mean + (2 * deviation)
+        self.format_length = max(l for l in lengths if l <= threshold)
 
     def interpret_opcode(self, opcode):
+        raise NotImplementedError('Does not handle context.')
         opcode = int(opcode, 0x10)
         if opcode in self.config['instructions']:
             return opcode
@@ -544,6 +687,7 @@ class Parser:
                 return None
 
     def interpret_instruction(self, line):
+        raise NotImplementedError('Does not handle context.')
         line = line.split('#')[0].strip()
         if line.count(':') != 1:
             return None
@@ -620,6 +764,7 @@ class Parser:
             if current_script:
                 result = self.interpret_instruction(line)
                 if result:
+                    print(result)
                     result.set_script(current_script)
                     continue
             prev_instruction = None
