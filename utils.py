@@ -1,5 +1,5 @@
 import random
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from hashlib import md5
 
 
@@ -844,14 +844,22 @@ class fake_yaml:
                 return False
             return value
 
-        data = {}
+        data = OrderedDict()
         nested = [(-1, data)]
-        for line in text.splitlines():
+        lines = text.splitlines()
+        temp = []
+        for line in lines:
             if '#' in line:
                 line, _ = line.split('#', 1)
             line = line.rstrip()
             if not line:
                 continue
+            if ':' in line:
+                temp.append(line)
+            else:
+                temp[-1] = ' '.join((temp[-1], line))
+        lines = temp
+        for line in lines:
             test = line.lstrip()
             indentation = len(line) - len(test)
             assert ':' in line
@@ -869,7 +877,7 @@ class fake_yaml:
             if value:
                 subnested[format_key(key)] = format_value(value)
             else:
-                next_nested = {}
+                next_nested = OrderedDict()
                 subnested[format_key(key)] = next_nested
                 nested.append((indentation, next_nested))
 
