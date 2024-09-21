@@ -80,6 +80,7 @@ class Unpacker:
                             return None
                 elif pointer is None:
                     value = 0
+                assert value >= 0
                 bytecode += value.to_bytes(length=self.pointer_length,
                                            byteorder=byteorder)
             return bytecode
@@ -111,6 +112,7 @@ class Unpacker:
             self._addresses = defaultdict(set)
             self._address_cache = {}
             self._nulled_addresses = set()
+            self._alignments = {}
             self.sections = {}
         elif self.is_recursive:
             self.sections = {}
@@ -126,6 +128,9 @@ class Unpacker:
 
         if 'finish' in self.config:
             self.addresses[f'@@{label}'].add(self.config['finish'])
+
+        if 'align' in self.config:
+            self.alignments[f'@{label}'] = self.config['align']
 
         if 'total_length' in self.config:
             total_length = self.config['total_length']
@@ -194,6 +199,10 @@ class Unpacker:
     @property
     def nulled_addresses(self):
         return self.root._nulled_addresses
+
+    @property
+    def alignments(self):
+        return self.root._alignments
 
     @property
     def start(self):
@@ -391,7 +400,36 @@ class Unpacker:
 
             updated = updated or local_updated
 
+        self.verify_alignment()
         return updated
+
+    def verify_alignment(self):
+        updated = True
+        while updated:
+            updated = False
+            for label in sorted(self.alignments):
+                label_align = self.alignments[label]
+                if isinstance(label_align, int):
+                    m, r = label_align, 0
+                else:
+                    m, r = label_align
+                for other in self.addresses[label]:
+                    if isinstance(other, int):
+                        if (other % m) != r:
+                            raise Exception(
+                                    f'FAILED ALIGNMENT {label}: '
+                                    f'{other:x} % {m} != {r}')
+                        continue
+                    other, offset = self.split_address_label(other)
+                    r2 = (r - offset) % m
+                    other_align = m
+                    if r2:
+                        other_align = (m, r2)
+                    if other in self.alignments:
+                        assert self.alignments[other] == other_align
+                    else:
+                        self.alignments[other] = other_align
+                        updated = True
 
     def guess_start(self):
         if self.start:
@@ -401,13 +439,14 @@ class Unpacker:
             self.addresses[self.slabel].add(0)
             return
 
-    def guess_finish(self):
-        if 'finish' in self.config or self.finishes is not None:
+    def guess_finish(self, override=False):
+        if self.finish is not None:
+            return
+        if 'finish' in self.config and not override:
             return
 
         if self.parent is None:
             self.addresses[self.flabel].add('!eof')
-            #self.propagate_addresses(self.flabel)
             return
 
         uncertain_address = False
@@ -425,7 +464,6 @@ class Unpacker:
         if self.start not in candidates:
             return
         candidates = {a for a in candidates if a > self.start}
-
         self.propagate_addresses({c.flabel for c in
                                   self.parent.descendents | {self.parent}})
 
@@ -436,6 +474,20 @@ class Unpacker:
 
         if candidates:
             self.addresses[self.flabel].add(min(candidates))
+
+    def guess_uncle_finish(self):
+        if self.finish is not None:
+            return
+        if self.parent is None:
+            return
+        if self.parent.parent is None:
+            return
+        uncles = self.parent.parent.children
+        parent_index = uncles.index(self.parent)
+        if len(uncles) > parent_index + 1:
+            uncle = uncles[parent_index + 1]
+            self.addresses[self.parent.flabel].add(uncle.slabel)
+        self.propagate_addresses(self.parent.flabel)
 
     def check_null_pointer(self, pointer):
         if pointer in (None, 0):
@@ -528,11 +580,14 @@ class Unpacker:
         finish = self.finish
         if finish is None and self.is_pointers:
             finish = self.get_pointer_table_size()
-        if None in (self.start, finish):
+        if finish is None:
+            self.guess_finish(override=True)
+            finish = self.finish
+        if finish is None:
             self.propagate_addresses()
             finish = self.finish
-            if None in (self.start, finish):
-                import pdb; pdb.set_trace()
+        if None in (self.start, finish):
+            import pdb; pdb.set_trace()
         assert None not in (self.start, finish)
         assert finish >= self.start
         assert None not in (self.parent.start, self.parent.finish)
@@ -805,8 +860,8 @@ class Unpacker:
             packed = self.root._packed_cache[c.label]
             if type(packed) in (bytes, Unpacker.PointerTable):
                 verify += len(packed)
-
         assert verify == total_size
+
         return total_size
 
     def calculate_packed_addresses(self):
@@ -862,26 +917,42 @@ class Unpacker:
                     break
                 packed_size = c.calculate_packed_size()
                 parent = c.parent
-                candidates = {self.parent.start}
+                candidates = {c.parent.start}
                 blacklisted = {None}
                 for c2 in parent.children:
                     blacklisted.add(c2.start)
                     candidates.add(c2.finish)
                 candidates = candidates - blacklisted
+                align = None
+                if 'align' in c.config:
+                    align = c.config['align']
+                    if isinstance(align, int):
+                        align_m, align_r = align, 0
+                    else:
+                        align_m, align_r = align
                 for candidate in sorted(candidates):
+                    if align:
+                        while candidate % align_m != align_r:
+                            candidate += 1
                     upper = candidate + packed_size
                     test = {a for a in blacklisted if a is not None
                             and candidate <= a < upper}
                     if test:
                         continue
                     self.addresses[c.slabel].add(candidate)
-                    #self.propagate_addresses(c.slabel)
+                    self.verify_alignment()
                     local_updated = True
                     break
 
             if not local_updated:
-                import pdb; pdb.set_trace()
                 raise Exception('Unable to allocate packed data.')
+
+        for c in self.descendents:
+            if 'align' in c.config:
+                align = c.config['align']
+                if c.start % align:
+                    raise Exception(
+                        f'Section {c.label} misaligned: {c.start:x}')
 
     def repack(self):
         assert self is self.root
