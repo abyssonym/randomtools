@@ -42,6 +42,7 @@ PSX_FILE_MANAGER = None
 OPEN_FILES = {}
 ALL_FILES = set()
 REMOVED_FILES = set()
+REIMPORTED_FILES = set()
 MAX_OPEN_FILE_COUNT = 100
 ADDRESSING_MODE = None
 MAPPINGS = {}
@@ -50,6 +51,8 @@ FULL_PATCH_CHANGELIST = {}
 
 
 def get_open_file(filepath, sandbox=False):
+    if filepath.endswith(';1'):
+        filepath = filepath[:-2]
     if isinstance(filepath, BytesIO) or isinstance(filepath, BufferedRandom):
         if filepath.closed:
             filepath = open(filepath.name, 'r+b')
@@ -103,6 +106,16 @@ def get_psx_file_manager():
     return PSX_FILE_MANAGER
 
 
+def reimport_psx_file(filepath, new_target_sector=None, verify=None):
+    if filepath.startswith(SANDBOX_PATH):
+        name = filepath[len(SANDBOX_PATH):].lstrip(path.sep)
+        close_file(filepath)  # do before importing to flush the file
+        PSX_FILE_MANAGER.import_file(name, filepath=filepath,
+                                     new_target_sector=new_target_sector,
+                                     verify=verify)
+        REIMPORTED_FILES.add(filepath)
+
+
 def reimport_psx_files():
     if not SANDBOX_PATH:
         return
@@ -110,17 +123,16 @@ def reimport_psx_files():
         return
     last_import = -1
     for (n, filepath) in enumerate(sorted(ALL_FILES)):
-        if filepath.startswith(SANDBOX_PATH):
-            count = int(round(9 * n / len(ALL_FILES)))
-            if count > last_import:
-                if count == 0:
-                    print('Re-importing files...')
-                last_import = count
-                stdout.write('%s ' % (10-count))
-                stdout.flush()
-            name = filepath[len(SANDBOX_PATH):].lstrip(path.sep)
-            close_file(filepath)  # do before importing to flush the file
-            PSX_FILE_MANAGER.import_file(name, filepath)
+        if filepath in REIMPORTED_FILES:
+            continue
+        count = int(round(9 * n / len(ALL_FILES)))
+        if count > last_import:
+            if count == 0:
+                print('Re-importing files...')
+            last_import = count
+            stdout.write('%s ' % (10-count))
+            stdout.flush()
+        reimport_psx_file(filepath)
     stdout.write('\n')
     PSX_FILE_MANAGER.finish()
 
