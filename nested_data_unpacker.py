@@ -761,27 +761,59 @@ class Unpacker:
             c.set_unpacked(unpacked[c.label])
 
     def repack_pointed_list(self):
-        PRESERVE_ORDER = True
+        SORTED_ORDER = False
+        PRESERVE_POINTERS = True
         OPTIMIZE = False
         pointsec = self.tree[self.config['linked_pointers']]
         keys = {k for k in pointsec.unpacked if k is not None}
         assert keys <= set(self.unpacked.keys())
 
-        if PRESERVE_ORDER:
+        if OPTIMIZE:
+            assert not (SORTED_ORDER or PRESERVE_POINTERS)
+
+        if SORTED_ORDER:
+            assert not PRESERVE_POINTERS
             keys = sorted(keys)
+        elif PRESERVE_POINTERS:
+            assert not SORTED_ORDER
         else:
-            raise NotImplementedError
+            raise Exception(f'Undefined order: {self.label}')
 
         offsets = {}
-        alldata = b''
-        for key in keys:
-            data = self.unpacked[key]
-            if OPTIMIZE and data in alldata:
-                offset = alldata.index(data)
-            else:
-                offset = len(alldata)
-                alldata += data
-            offsets[key] = offset
+
+        if SORTED_ORDER:
+            alldata = b''
+            for key in keys:
+                data = self.unpacked[key]
+                if OPTIMIZE and data in alldata:
+                    offset = alldata.index(data)
+                else:
+                    offset = len(alldata)
+                    alldata += data
+                offsets[key] = offset
+
+        if PRESERVE_POINTERS:
+            lowest = 0
+            if self.unpacked.keys():
+                lowest = min(self.unpacked.keys())
+            keys = {key-lowest: key for key in self.unpacked.keys()}
+            with BytesIO(b'') as f:
+                for verify in (False, True):
+                    for key in keys:
+                        f.seek(key)
+                        mydata = self.unpacked[keys[key]]
+                        if not verify:
+                            f.write(mydata)
+                            offsets[keys[key]] = key
+                        else:
+                            vdata = f.read(len(mydata))
+                            if vdata != mydata:
+                                raise Exception(
+                                        f'Unable to verify {self.label} data '
+                                        f'at offset {key:x}.')
+                f.seek(0)
+                alldata = f.read()
+
         pointsec.linked_offsets = offsets
         pointsec.linked_section = self
         return alldata
