@@ -461,6 +461,7 @@ class Script:
                 self.parser.script_pointers.add(p)
 
     def split(self, pointer):
+        ever_after = self.joined_after
         new_script = self.parser.Script(pointer=pointer,
                                         parser=self.parser)
         after_instructions = [i for i in self.instructions
@@ -468,12 +469,23 @@ class Script:
         self.instructions = [i for i in self.instructions
                              if i not in after_instructions]
         new_script.instructions = after_instructions
+        if ever_after is not None:
+            assert ever_after.joined_before is self
+            self.joined_after = None
+            ever_after.joined_before = new_script
+            new_script.joined_after = ever_after
         self.join(new_script)
         return self, new_script
 
     def join(self, script):
+        if self.joined_after:
+            assert self.joined_after is script
+        if script.joined_before:
+            assert script.joined_before is self
         self.joined_after = script
         script.joined_before = self
+        assert self.joined_after.joined_before is self
+        assert script.joined_before.joined_after is script
 
 
 class Parser:
