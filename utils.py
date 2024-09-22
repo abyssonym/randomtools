@@ -133,6 +133,12 @@ def hexstring(value):
     return value
 
 
+def hexify(s):
+    if isinstance(s, int):
+        return f'{s:0>2x}'
+    return ' '.join([f'{w:0>2x}' for w in s])
+
+
 generator = {}
 
 
