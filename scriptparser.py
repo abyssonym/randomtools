@@ -6,8 +6,6 @@ from sys import argv
 from .utils import cached_property
 from .utils import fake_yaml as yaml
 
-OPTIMIZE = False
-
 
 def hexify(s):
     result = []
@@ -123,7 +121,7 @@ class TrackedPointer:
         return self.pointer < other.pointer
 
     def __hash__(self):
-        return self.pointer
+        return self.old_pointer
 
     @property
     def converted(self):
@@ -191,6 +189,12 @@ class Instruction:
     @property
     def config(self):
         return self.parser.config
+
+    @property
+    def signature(self):
+        return (self.opcode, self.context,
+                frozenset(self.parameters.items()),
+                frozenset(self.text_parameters.items()))
 
     def set_script(self, script):
         if self.script is not None and self in self.script.instructions:
@@ -495,7 +499,10 @@ class Script:
         return self.pointer < other.pointer
 
     def __hash__(self):
-        return (self.parser.__hash__(), self.pointer.__hash__()).__hash__()
+        if not hasattr(self, '_hash'):
+            self._hash = (self.parser.__hash__(),
+                          self.pointer.__hash__()).__hash__()
+        return self._hash
 
     @property
     def references(self):
@@ -626,6 +633,9 @@ class Parser:
     Script = Script
     Instruction = Instruction
     TrackedPointer = TrackedPointer
+
+    USE_BYTECODE_CACHE = True
+    INSTRUCTION_BYTECODE_CACHE = {}
 
     def __init__(self, config, data, pointers, log_reads=False,
                  reserved_contexts=None):
@@ -956,8 +966,10 @@ class Parser:
 
     def read_script(self, pointer):
         if self.scripts:
-            nearest = max({s for s in self.scripts.values()
-                           if s.pointer < pointer or s.pointer == pointer})
+            #nearest = max({s for s in self.scripts.values()
+            #               if s.pointer < pointer or s.pointer == pointer})
+            nearest = max(s for s in self.scripts if s <= pointer.old_pointer)
+            nearest = self.scripts[nearest]
             assert nearest.pointer != pointer
             for i in nearest.instructions:
                 if i.start_address == pointer.converted:
@@ -1347,6 +1359,14 @@ class Parser:
                 instruction.manifest['is_variable_length']:
             variable_length = True
 
+        if self.USE_BYTECODE_CACHE and variable_length is False:
+            signature = instruction.signature
+            assert signature is not None
+            if signature in self.INSTRUCTION_BYTECODE_CACHE:
+                return self.INSTRUCTION_BYTECODE_CACHE[signature]
+        else:
+            signature = None
+
         difference = (instruction.manifest['length'] -
                       instruction.manifest['opcode_size'])
         assert difference >= 0
@@ -1378,6 +1398,9 @@ class Parser:
         bytecode = value.to_bytes(length=length, byteorder='big')
         if variable_length:
             return self.variable_instruction_to_bytecode(instruction, bytecode)
+
+        if signature is not None:
+            self.INSTRUCTION_BYTECODE_CACHE[signature] = bytecode
         return bytecode
 
     def script_to_bytecode(self, script):
@@ -1388,31 +1411,17 @@ class Parser:
             header = b''
         bytecode = BytesIO(header)
 
-        if OPTIMIZE:
-            scripts_by_dependency = defaultdict(set)
-            for _, s in self.scripts.items():
-                for d in s.joined_referenced_scripts:
-                    scripts_by_dependency[d].add(s)
-
         done_scripts = set()
         assert not any(hasattr(s.pointer, 'repointer')
                        for s in self.scripts.values())
+        no_joined_before = {s for s in self.scripts.values()
+                            if s.joined_before is None}
         chosen = None
         while True:
-            todo_scripts = set(self.scripts.values()) - done_scripts
-            if not todo_scripts:
-                break
             if chosen is None:
-                candidates = {s for s in todo_scripts
-                              if s.joined_before is None}
-                if OPTIMIZE:
-                    candidates = {
-                        s for s in candidates
-                        if s.joined_referenced_scripts <= done_scripts | {s}}
-                    chosen = max(candidates,
-                                 key=lambda s: (s.joined_bytecode_length, s))
-                else:
-                    chosen = min(candidates, key=lambda s: s.pointer.pointer)
+                if not no_joined_before:
+                    break
+                chosen = min(no_joined_before, key=lambda s: s.pointer.pointer)
             assert chosen is not None
             assert chosen not in done_scripts
             assert chosen is self.scripts[chosen.pointer.old_pointer]
@@ -1428,31 +1437,13 @@ class Parser:
             assert bytecode.tell() == chosen.pointer.converted_repointer
             bytecode.write(chosen.bytecode)
             done_scripts.add(chosen)
+            no_joined_before.discard(chosen)
             chosen = chosen.joined_after
 
         def dump_write_all():
             for s in self.scripts.values():
                 bytecode.seek(s.pointer.converted_repointer)
                 bytecode.write(s.bytecode)
-
-        if OPTIMIZE:
-            ordered = sorted(self.scripts.values(), reverse=True,
-                             key=lambda s: (s.joined_bytecode_length, s))
-            optimize = OPTIMIZE
-            while optimize:
-                optimize = False
-                dump_write_all()
-                bytecode.seek(0)
-                data = bytecode.read()
-                for s in ordered:
-                    sdata = s.bytecode
-                    assert sdata in data
-                    index = data.index(sdata)
-                    assert index <= s.pointer.converted_repointer
-                    if index < s.pointer.converted_repointer:
-                        if index < len(header):
-                            raise NotImplementedError
-                        raise NotImplementedError
 
         dump_write_all()
         for s in self.scripts.values():
