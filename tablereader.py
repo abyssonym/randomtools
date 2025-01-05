@@ -1,17 +1,19 @@
-from .psx_file_extractor import FileManager, SANDBOX_PATH
-from .utils import (read_multi, write_multi, classproperty,
-                    random, md5hash, cached_property, clached_property,
-                    ips_patch, map_to_snes, read_lines_nocomment)
-from _io import BytesIO, BufferedRandom
-from functools import total_ordering
-from os import path
-from hashlib import md5
 import re
-from sys import stdout
 import string
-from copy import copy
 from collections import Counter
+from copy import copy
+from functools import total_ordering
+from hashlib import md5
+from math import ceil
+from os import path
+from sys import stdout
 
+from _io import BufferedRandom, BytesIO
+
+from .psx_file_extractor import SANDBOX_PATH, FileManager
+from .utils import (MODULE_FILEPATH, cached_property, clached_property,
+                    classproperty, ips_patch, map_to_snes, md5hash, random,
+                    read_lines_nocomment, read_multi, write_multi)
 
 try:
     from sys import _MEIPASS
@@ -48,15 +50,16 @@ ADDRESSING_MODE = None
 MAPPINGS = {}
 PATCH_PARAMETERS = {}
 FULL_PATCH_CHANGELIST = {}
+PATCHCODE_ALIASES = {}
 
 
 def get_open_file(filepath, sandbox=False):
-    if filepath.endswith(';1'):
-        filepath = filepath[:-2]
     if isinstance(filepath, BytesIO) or isinstance(filepath, BufferedRandom):
         if filepath.closed:
             filepath = open(filepath.name, 'r+b')
         return filepath
+    if filepath.endswith(';1'):
+        filepath = filepath[:-2]
     filepath = filepath.replace('/', path.sep)
     filepath = filepath.replace('\\', path.sep)
     assert filepath not in REMOVED_FILES
@@ -176,6 +179,23 @@ def get_addressing_mode():
     return ADDRESSING_MODE
 
 
+def set_patch_aliases(filename):
+    filepath = path.join(MODULE_FILEPATH, filename)
+    for line in read_lines_nocomment(filepath):
+        while '  ' in line:
+            line = line.replace('  ', ' ')
+        alias, code = line.split(' ')[:2]
+        alias = alias.lower()
+        if not alias.startswith('.'):
+            alias = f'.{alias}'
+        if alias in PATCHCODE_ALIASES:
+            raise Exception(f'Duplicate alias: {alias}')
+        if code.startswith('.') and code in PATCHCODE_ALIASES:
+            PATCHCODE_ALIASES[alias] = PATCHCODE_ALIASES[code]
+            continue
+        PATCHCODE_ALIASES[alias] = code
+
+
 def determine_global_table(outfile, interactive=True, allow_conversions=True):
     global GLOBAL_LABEL
     if GLOBAL_LABEL is not None:
@@ -279,10 +299,13 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
             temp[key] = offset
         mapping = temp
 
+    if mapping is not None:
+        sorted_mapping_keys = sorted(mapping.keys())
+
     def map_address(address):
         if mapping is None:
             return address
-        for start, finish in sorted(mapping.keys()):
+        for start, finish in sorted_mapping_keys:
             if start <= address <= finish:
                 return address + mapping[start, finish]
         raise Exception('No valid mapping for {0:0>6x} in {1}.'.format(
@@ -298,6 +321,10 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
     read_into = patch
     valparmatcher = re.compile('({{([^:]*)=([^}]*)}})')
     defparmatcher = re.compile('({{([^:]*):([^}]*)}})')
+
+    sorted_patch_parameters = sorted(PATCH_PARAMETERS,
+                                     key=lambda n: (-len(n), n))
+
     f = open(patchfilename)
     for line in f:
         line = line.strip()
@@ -336,7 +363,7 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
                 line = line.replace(to_replace, '{{%s}}' % name)
 
         if '{{' in line:
-            for name in sorted(PATCH_PARAMETERS, key=lambda n: (-len(n), n)):
+            for name in sorted_patch_parameters:
                 if name not in line:
                     continue
                 to_replace = '{{%s}}' % name
@@ -447,7 +474,20 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
             else:
                 next_address += 1
 
+    for aname in sorted(code_addresses):
+        if aname.startswith('.'):
+            raise Exception('Address "%s" cannot start '
+                            'with a period.' % aname)
+
+    for lname in sorted(labels):
+        if lname.startswith('.'):
+            raise Exception('Label "%s" cannot start '
+                            'with a period.' % lname)
+
     for defname in sorted(definitions):
+        if defname.startswith('.'):
+            raise Exception('Definition "%s" cannot start '
+                            'with a period.' % defname)
         for aname in sorted(code_addresses):
             if defname in aname.lower():
                 raise Exception('Address "%s" cannot contain '
@@ -457,10 +497,15 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
                 raise Exception('Label "%s" cannot contain '
                                 'definition "%s".' % (lname, defname))
 
+    sorted_aliases = sorted(PATCHCODE_ALIASES, key=lambda a: (-len(a), a))
+    sorted_labels = sorted(labels, key=lambda l: (-len(l), l))
     for read_into in (patch, validation):
         for (address, filename) in sorted(read_into):
             code = read_into[address, filename]
-            for name in sorted(labels, key=lambda l: (-len(l), l)):
+            for alias in sorted_aliases:
+                if alias in code:
+                    code = code.replace(alias, PATCHCODE_ALIASES[alias])
+            for name in sorted_labels:
                 if name in code:
                     direct = '@%s' % name
                     if direct in code:

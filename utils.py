@@ -1,6 +1,10 @@
 import random
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict, defaultdict
 from hashlib import md5
+from math import ceil
+from os import path
+
+MODULE_FILEPATH, _ = path.split(__file__)
 
 
 def cached_property(fn):
@@ -771,7 +775,6 @@ class SnesGfxManager:
     @staticmethod
     def image_to_data(filename):
         from PIL import Image
-        from math import ceil
         image = Image.open(filename)
         tile_width = ceil(image.width / 8)
         tile_height = ceil(image.height / 8)
