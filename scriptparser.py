@@ -253,14 +253,12 @@ class Instruction:
                    f'{header:x} (context {self.context})')
             short_dump()
             print(msg)
-            import pdb; pdb.set_trace()
             raise Exception(msg)
         if len(valid_opcodes) >= 2:
             msg = (f'Multiple opcode conflict at @{self.start_address:x}: '
                    f'{header:x} (context {self.context})')
             short_dump()
             print(msg)
-            import pdb; pdb.set_trace()
             raise Exception(msg)
         self.opcode = list(valid_opcodes)[0]
 
@@ -338,7 +336,7 @@ class Instruction:
         value = self.parameters[parameter_name]
         try:
             pmani = self.manifest['fields'][parameter_name]
-            return pmani['prettify'][parameter_name][value]
+            return pmani['prettify'][value]
         except KeyError:
             pass
         if parameter_name in self.config['prettify']:
@@ -466,12 +464,19 @@ class Script:
 
     def __repr__(self):
         header = self.parser.format_pointer(self.pointer)
-
         if self.instructions and (self.instructions[0].context !=
                                   self.parser.config['default_context']):
             context = self.instructions[0].context
             header = f'{header} ({context})'
+
+        comment = self.comment
+        if comment is not None:
+            header = f'{header}  # {comment}'
+        elif self.pointer in self.parser.original_pointers:
+            header = f'{header}  # origin'
+
         lines = [header]
+
         start_addresses = [f'{i.start_address:x}' for i in self.instructions]
         address_length = 0
         if start_addresses:
@@ -503,6 +508,10 @@ class Script:
             self._hash = (self.parser.__hash__(),
                           self.pointer.__hash__()).__hash__()
         return self._hash
+
+    @property
+    def comment(self):
+        return None
 
     @property
     def references(self):
@@ -660,8 +669,10 @@ class Parser:
         self.scripts = None
         self.pointers = {}
         self.script_pointers = set()
+        self.original_pointers = set()
         for p in pointers:
-            self.add_pointer(p, script=True)
+            p2 = self.add_pointer(p, script=True)
+            self.original_pointers.add(p2)
         self.get_text_decode_table()
         self.reserved_contexts = {}
         if reserved_contexts is not None:
@@ -671,6 +682,13 @@ class Parser:
         self.read_scripts()
 
     def clean_config(self):
+        defaults = {
+            'prettify': {},
+            }
+        for key in defaults:
+            if key not in self.config:
+                self.config[key] = defaults[key]
+
         for conname, context in self.config['contexts'].items():
             instructions = context['instructions']
             if '_original' not in context:
@@ -1219,7 +1237,6 @@ class Parser:
             if '=' in parameter:
                 parameter_name, parameter = parameter.split('=', 1)
             if parameter_name is None:
-                import pdb; pdb.set_trace()
                 raise Exception(f'Unknown parameter: {line}')
             if parameter_name in interpreted:
                 raise Exception(f'Parameter "{parameter_name}" out of order: '
