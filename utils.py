@@ -1,4 +1,5 @@
 import random
+import struct
 from collections import OrderedDict, defaultdict
 from hashlib import md5
 from math import ceil
@@ -51,6 +52,22 @@ def read_lines_nocomment(filename):
                 continue
             lines.append(line)
     return lines
+
+
+NESTED_FAIL = object()
+def search_nested_key(nested, key, root=True):
+    if key in nested:
+        return nested[key]
+    candidates = [search_nested_key(v, key, root=False)
+                  for v in nested.values() if isinstance(v, dict)]
+    candidates = [c for c in candidates if c is not NESTED_FAIL]
+    if len(candidates) == 1:
+        return candidates[0]
+    if root:
+        if not candidates:
+            raise Exception(f'Nested key not found: {key}')
+        raise Exception(f'Nested key not unique: {key}')
+    return NESTED_FAIL
 
 
 def md5hash(filename, blocksize=65536):
@@ -897,3 +914,95 @@ class fake_yaml:
 
     def safe_load(text, testing=False):
         return fake_yaml.load(text, testing=testing)
+
+
+class NamedStruct:
+    FIELD_NAMES = None
+    FORMAT_STRING = None
+    VERIFIED = False
+
+    def __init__(self, *args, **kwargs):
+        self._original_values = None
+        if not self.VERIFIED:
+            self.verify()
+
+        if args and kwargs:
+            raise TypeError(f'Specify only one of {args} or {kwargs}')
+        elif not (args or kwargs):
+            raise TypeError(f'Please specify either a bytestring '
+                            f'or keyword arguments.')
+        elif args and len(args) > 1:
+            raise TypeError(f'NamedStruct takes one non-keyword argument.')
+
+        if args:
+            self._original_values = self.unpack(args[0])
+        else:
+            self._original_values = OrderedDict()
+            for field in self.FIELD_NAMES:
+                self._original_values[field] = kwargs[field]
+
+        if len(self._original_values) != len(self.FIELD_NAMES):
+            difference = set(self.FIELD_NAMES) - self._original_values.keys()
+            raise TypeError(f'Missing fields {difference}')
+
+        for field, value in self._original_values.items():
+            setattr(self, field, value)
+
+    def __repr__(self):
+        s = f'{self.__class__.__name__}: '
+        fieldstrs = []
+        for field, value in self.unpacked.items():
+            if isinstance(value, int):
+                value = f'{value:x}'
+            if isinstance(value, bytes):
+                value = hexify(value).replace(' ', '')
+            fieldstrs.append(f'{field}={value}')
+        return (s + ','.join(fieldstrs)).strip()
+
+    def __hash__(self):
+        return self.packed.__hash__()
+
+    @classmethod
+    def verify(self):
+        intersection = set(self.FIELD_NAMES) & set(dir(self))
+        if intersection:
+            raise Exception(f'Cannot use the following '
+                            f'field names: {intersection}')
+        self.VERIFIED = True
+
+    @property
+    def packed(self):
+        return self.pack()
+
+    @property
+    def unpacked(self):
+        return self.unpack()
+
+    @property
+    def changed(self):
+        return self.unpacked != self._original_values
+
+    def pack(self):
+        return struct.pack(
+                self.FORMAT_STRING, *[getattr(self, field) for field
+                                      in self.FIELD_NAMES])
+
+    def unpack(self, data=None):
+        if data is None:
+            result = OrderedDict()
+            for field in self.FIELD_NAMES:
+                result[field] = getattr(self, field)
+            return result
+
+        values = struct.unpack(self.FORMAT_STRING, data)
+        if len(values) != len(self.FIELD_NAMES):
+            raise Exception(f'Format string {self.FORMAT_STRING} does '
+                            f'not map to field names {self.FIELD_NAMES}')
+        return OrderedDict(zip(self.FIELD_NAMES, values))
+
+    def set_values(self, values):
+        for field, value in values.items():
+            setattr(self, field, value)
+
+    def restore(self):
+        self.set_values(self._original_values)
