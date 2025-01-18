@@ -1,9 +1,12 @@
+import json
 from collections import OrderedDict, defaultdict
+from copy import copy
 from io import BytesIO
 from os import SEEK_END
 from sys import argv
+
 from randomtools.utils import fake_yaml as yaml
-import json
+from randomtools.utils import search_nested_key
 
 
 def hexify(s):
@@ -147,6 +150,9 @@ class Unpacker:
         if self.is_pointers:
             self.check_pointer_dimensions()
 
+        if self.is_regular_list or self.is_pointed_list:
+            self.check_list_dimensions()
+
         if not self.parent:
             #self.propagate_addresses()
             self.preclean()
@@ -166,6 +172,11 @@ class Unpacker:
     def is_pointed_list(self):
         return 'data_type' in self.config and \
                 self.config['data_type'] == 'pointed_list'
+
+    @property
+    def is_regular_list(self):
+        return 'data_type' in self.config and \
+                self.config['data_type'] == 'regular_list'
 
     @property
     def root(self):
@@ -320,6 +331,28 @@ class Unpacker:
             if finish not in self.addresses[key]:
                 self.addresses[key].add(finish)
 
+    def check_list_dimensions(self):
+        num_items = self.get_setting('num_items')
+        item_size = self.get_setting('item_size')
+
+        if self.start is not None and self.finish is not None and \
+                (num_items, item_size).count(None) == 1:
+            total_length = self.finish - self.start
+            if num_items is None:
+                self.set_value('num_items', total_length // item_size)
+            if item_size is None:
+                self.set_value('item_size', total_length // num_items)
+            num_items = self.get_setting('num_items')
+            item_size = self.get_setting('item_size')
+
+        if None not in (num_items, item_size, self.start):
+            total_length = self.evaluate(num_items) * self.evaluate(item_size)
+            key = self.flabel
+            finish = self.start + total_length
+            if finish not in self.addresses[key]:
+                self.addresses[key].add(finish)
+                self.propagate_addresses()
+
     def propagate_addresses(self, seed=None):
         if isinstance(seed, str):
             seed = {seed}
@@ -442,11 +475,22 @@ class Unpacker:
     def guess_finish(self, override=False):
         if self.finish is not None:
             return
+
         if 'finish' in self.config and not override:
             return
 
+        if self.is_regular_list or self.is_pointed_list:
+            self.check_list_dimensions()
+
+        if self.is_pointers:
+            self.check_pointer_dimensions()
+
         if self.parent is None:
             self.addresses[self.flabel].add('!eof')
+            return
+
+        # double check
+        if self.finish is not None:
             return
 
         uncertain_address = False
@@ -694,6 +738,24 @@ class Unpacker:
 
         return datas
 
+    def unpack_regular_list(self):
+        num_items = self.get_setting('num_items')
+        item_size = self.get_setting('item_size')
+
+        if None in (num_items, item_size):
+            self.check_list_dimensions()
+            num_items = self.get_setting('num_items')
+            item_size = self.get_setting('item_size')
+
+        item_size = self.evaluate(item_size)
+        items = []
+        self.packed.seek(0)
+        for _ in range(self.evaluate(num_items)):
+            item = self.packed.read(item_size)
+            assert len(item) == item_size
+            items.append(item)
+        return items
+
     def unpack(self):
         if hasattr(self, 'unpacked'):
             return self.unpacked
@@ -734,8 +796,23 @@ class Unpacker:
         if self.is_pointed_list:
             unpacked = self.unpack_pointed_list()
 
+        if self.is_regular_list:
+            unpacked = self.unpack_regular_list()
+
         if unpacked is None:
             raise Exception(f'Unknown data type: {self.label}')
+
+        subformat = self.get_setting('subformat')
+        if subformat is not None:
+            if isinstance(unpacked, dict):
+                for k, v in list(unpacked.items()):
+                    unpacked[k] = self.subunpack(subformat, v)
+            elif isinstance(unpacked, list):
+                unpacked = [self.subunpack(subformat, v) for v in unpacked]
+            elif isinstance(unpacked, bytes):
+                unpacked = self.subunpack(subformat, unpacked)
+            else:
+                import pdb; pdb.set_trace()
 
         if 'value' in self.config:
             if isinstance(unpacked, bytes):
@@ -743,7 +820,6 @@ class Unpacker:
                                        byteorder=self.get_setting('byteorder'))
                 evaluated = self.evaluate(self.config['value'])
                 if value != evaluated and evaluated != '{%s}' % self.label:
-                    import pdb; pdb.set_trace()
                     raise Exception(f'Validation failure: {self.label}')
             else:
                 raise NotImplementedError
@@ -759,6 +835,9 @@ class Unpacker:
             return
         for c in self.children:
             c.set_unpacked(unpacked[c.label])
+
+    def repack_regular_list(self):
+        return b''.join(self.unpacked)
 
     def repack_pointed_list(self):
         SORTED_ORDER = False
@@ -843,6 +922,20 @@ class Unpacker:
         if self.label in self.root._packed_cache:
             return self.root._packed_cache[self.label]
 
+        subformat = self.get_setting('subformat')
+        backup_unpacked = None
+        if subformat:
+            unpacked = self.unpacked
+            backup_unpacked = copy(unpacked)
+            if isinstance(unpacked, dict):
+                for k, v in list(unpacked.items()):
+                    unpacked[k] = self.subrepack(subformat, v)
+            elif isinstance(unpacked, list):
+                unpacked = [self.subrepack(subformat, v) for v in unpacked]
+            elif isinstance(unpacked, bytes):
+                unpacked = self.subrepack(subformat, unpacked)
+            self.unpacked = unpacked
+
         packed = None
         if self.children:
             complete = True
@@ -859,20 +952,23 @@ class Unpacker:
             packed = set(packed.keys())
         elif self.unpacked is None:
             packed = None
+        elif self.is_regular_list:
+            packed = self.repack_regular_list()
         elif self.is_pointed_list:
             packed = self.repack_pointed_list()
         elif self.is_pointers:
             packed = self.repack_pointers()
         elif self.config['data_type'] == 'blob':
-            try:
-                assert isinstance(self.unpacked, bytes)
-            except:
-                import pdb; pdb.set_trace()
+            assert isinstance(self.unpacked, bytes)
             packed = self.unpacked
         else:
             import pdb; pdb.set_trace()
 
         self.root._packed_cache[self.label] = packed
+
+        if backup_unpacked is not None:
+            self.unpacked = backup_unpacked
+
         return self.partial_repack()
 
     def calculate_packed_size(self):
@@ -1015,6 +1111,16 @@ class Unpacker:
         self.set_packed(packed)
         self.packed.seek(0)
         return self.packed.read()
+
+    def subunpack(self, subformat, packed):
+        subun = Unpacker(subformat)
+        subun.set_packed(packed)
+        return subun.unpack()
+
+    def subrepack(self, subformat, unpacked):
+        subun = Unpacker(subformat)
+        subun.set_unpacked(unpacked)
+        return subun.repack()
 
 
 if __name__ == '__main__':
