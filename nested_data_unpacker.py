@@ -154,7 +154,6 @@ class Unpacker:
             self.check_list_dimensions()
 
         if not self.parent:
-            #self.propagate_addresses()
             self.preclean()
             self.propagate_addresses()
 
@@ -327,7 +326,8 @@ class Unpacker:
         pointer_length = self.get_setting('pointer_length')
         if None not in (num_pointers, pointer_length, self.start):
             key = self.flabel
-            finish = self.start + (num_pointers * pointer_length)
+            finish = self.start + (self.evaluate(num_pointers) *
+                                   pointer_length)
             if finish not in self.addresses[key]:
                 self.addresses[key].add(finish)
 
@@ -351,7 +351,6 @@ class Unpacker:
             finish = self.start + total_length
             if finish not in self.addresses[key]:
                 self.addresses[key].add(finish)
-                self.propagate_addresses()
 
     def propagate_addresses(self, seed=None):
         if isinstance(seed, str):
@@ -359,12 +358,12 @@ class Unpacker:
         elif seed is None:
             seed = set(self.addresses.keys())
         updated = False
-        local_updated = True
+        local_updated = set(seed)
         done_pairs = set()
         while local_updated:
-            local_updated = False
-            resolved = defaultdict(set)
-            for key1 in sorted(seed):
+            previous_updated = local_updated
+            local_updated = set()
+            for key1 in sorted(previous_updated):
                 assert not isinstance(key1, int)
                 key1_address = self.get_address(key1)
                 for key2 in list(self.addresses[key1]):
@@ -374,23 +373,15 @@ class Unpacker:
                         continue
                     done_pairs.add((key1, key2))
                     if isinstance(key2, int):
-                        resolved[key2].add(key1)
                         continue
                     if key2 == '!eof':
-                        if not key1.startswith('@@'):
-                            flabel = f'@{key1}'
-                            if '!eof' not in self.addresses[flabel]:
-                                self.addresses[flabel].add('!eof')
-                                seed.add(flabel)
-                                local_updated = True
-                        label = key1[2:]
                         length = self.root.get_packed_length()
                         if length is None:
                             continue
                         key2_address = f'@{self.root.label},{length}'
                         if key2_address not in self.addresses[key1]:
                             self.addresses[key1].add(key2_address)
-                            local_updated = True
+                            local_updated.add(key1)
                         continue
                     key2, offset = self.split_address_label(key2)
                     if offset:
@@ -400,8 +391,7 @@ class Unpacker:
 
                     if reverse_key not in self.addresses[key2]:
                         self.addresses[key2].add(reverse_key)
-                        local_updated = True
-                        seed.add(key2)
+                        local_updated.add(key2)
 
                     key2_address = self.get_address(key2)
                     if key2_address is None and key1_address is not None:
@@ -409,29 +399,9 @@ class Unpacker:
                         assert key2_address > 0
                         if key2_address not in self.addresses[key2]:
                             self.addresses[key2].add(key2_address)
-                            local_updated = True
-                            seed.add(key2)
-                    if key1_address is None and key2_address is not None:
-                        key1_address = key2_address + offset
-                        assert key1_address > 0
-                        if key1_address not in self.addresses[key1]:
-                            self.addresses[key1].add(key1_address)
-                            local_updated = True
+                            local_updated.add(key2)
 
-            for address in resolved:
-                keys = resolved[address]
-                if len(keys) <= 1:
-                    continue
-                labels = set()
-                for key in keys:
-                    labels |= self.addresses[key]
-                for key in keys:
-                    if labels > self.addresses[key]:
-                        seed.add(key)
-                        self.addresses[key] |= labels
-                        local_updated = True
-
-            updated = updated or local_updated
+            updated = updated or bool(local_updated)
 
         self.verify_alignment()
         return updated
@@ -508,8 +478,6 @@ class Unpacker:
         if self.start not in candidates:
             return
         candidates = {a for a in candidates if a > self.start}
-        self.propagate_addresses({c.flabel for c in
-                                  self.parent.descendents | {self.parent}})
 
         address = self.parent.finish
         if address is not None:
@@ -531,7 +499,6 @@ class Unpacker:
         if len(uncles) > parent_index + 1:
             uncle = uncles[parent_index + 1]
             self.addresses[self.parent.flabel].add(uncle.slabel)
-        self.propagate_addresses(self.parent.flabel)
 
     def check_null_pointer(self, pointer):
         if pointer in (None, 0):
@@ -610,7 +577,7 @@ class Unpacker:
             if not isinstance(packed, BytesIO):
                 packed = BytesIO(packed)
             self.packed = packed
-            self.propagate_addresses({self.slabel, self.flabel})
+            self.propagate_addresses(self.flabel)
             return
 
         assert self.parent is not None
@@ -663,13 +630,14 @@ class Unpacker:
         num_pointers = self.get_setting('num_pointers')
         if pointer_names is None:
             if num_pointers is not None:
-                pointer_names = [None] * self.get_setting('num_pointers')
+                pointer_names = [None] * self.evaluate(
+                        self.get_setting('num_pointers'))
             else:
                 self.packed.seek(0, SEEK_END)
                 if self.packed.tell() == 0:
                     pointer_names = []
         if num_pointers:
-            assert len(pointer_names) == num_pointers
+            assert len(pointer_names) == self.evaluate(num_pointers)
         self.packed.seek(0)
         lowest = None
         propagate_seed = set()
@@ -709,6 +677,7 @@ class Unpacker:
             elif lowest is None and not pointers:
                 self.addresses[section.slabel].add(section.flabel)
                 propagate_seed.add(section.slabel)
+        propagate_seed = {l for l in propagate_seed if not l.startswith('@@')}
         self.propagate_addresses(propagate_seed)
 
         return pointers
@@ -846,6 +815,8 @@ class Unpacker:
         pointsec = self.tree[self.config['linked_pointers']]
         keys = {k for k in pointsec.unpacked if k is not None}
         assert keys <= set(self.unpacked.keys())
+        if keys != set(self.unpacked.keys()):
+            print(f'WARNING: Mismatched keys in section {self.label}')
 
         if OPTIMIZE:
             assert not (SORTED_ORDER or PRESERVE_POINTERS)
@@ -972,12 +943,16 @@ class Unpacker:
         return self.partial_repack()
 
     def calculate_packed_size(self):
+        if hasattr(self, '_packed_size'):
+            return self._packed_size
+
         if not self.children:
             packed = self.root._packed_cache[self.label]
             if packed is None:
                 return 0
             assert type(packed) in (bytes, Unpacker.PointerTable)
-            return len(packed)
+            self._packed_size = len(packed)
+            return self.calculate_packed_size()
 
         total_size = 0
         for c in self.children:
@@ -989,8 +964,8 @@ class Unpacker:
             if type(packed) in (bytes, Unpacker.PointerTable):
                 verify += len(packed)
         assert verify == total_size
-
-        return total_size
+        self._packed_size = total_size
+        return self.calculate_packed_size()
 
     def calculate_packed_addresses(self):
         assert self is self.root
@@ -1032,6 +1007,8 @@ class Unpacker:
                         local_updated = True
 
             if local_updated:
+                propagate_seed = {l for l in propagate_seed
+                                  if l.startswith('@@')}
                 self.propagate_addresses(propagate_seed)
                 continue
 
