@@ -218,28 +218,33 @@ class Instruction:
         header = int.from_bytes(header, byteorder='big')
         self.parser.data.seek(self.start_address)
 
-        instructions = self.parser.get_instructions(context=self.context)
-        originals = self.parser.config['contexts'][self.context]['_original']
-        valid_opcodes, inherited_opcodes = set(), set()
-        for opcode in instructions:
-            opcode_size = instructions[opcode]['opcode_size']
-            if header_size < opcode_size:
-                continue
-            mask = instructions[opcode]['mask']
-            tempcode = header >> ((header_size - opcode_size) * 8)
-            if tempcode & mask == opcode & mask:
-                if 'range' in instructions[opcode] and \
-                        instructions[opcode]['range'] is not None:
-                    lower, upper = instructions[opcode]['range']
-                    if not lower <= tempcode <= upper:
-                        continue
-                if opcode in originals:
-                    valid_opcodes.add(opcode)
-                else:
-                    inherited_opcodes.add(opcode)
+        opcode_key = (self.context, header)
+        if opcode_key not in self.parser.valid_opcode_cache:
+            instructions = self.parser.get_instructions(context=self.context)
+            originals = \
+                    self.parser.config['contexts'][self.context]['_original']
+            valid_opcodes, inherited_opcodes = set(), set()
+            for opcode in instructions:
+                opcode_size = instructions[opcode]['opcode_size']
+                if header_size < opcode_size:
+                    continue
+                mask = instructions[opcode]['mask']
+                tempcode = header >> ((header_size - opcode_size) * 8)
+                if tempcode & mask == opcode & mask:
+                    if 'range' in instructions[opcode] and \
+                            instructions[opcode]['range'] is not None:
+                        lower, upper = instructions[opcode]['range']
+                        if not lower <= tempcode <= upper:
+                            continue
+                    if opcode in originals:
+                        valid_opcodes.add(opcode)
+                    else:
+                        inherited_opcodes.add(opcode)
+            if not valid_opcodes:
+                valid_opcodes = inherited_opcodes
+            self.parser.valid_opcode_cache[opcode_key] = valid_opcodes
 
-        if not valid_opcodes:
-            valid_opcodes = inherited_opcodes
+        valid_opcodes = self.parser.valid_opcode_cache[opcode_key]
 
         def short_dump():
             for i in self.script.instructions:
@@ -679,6 +684,9 @@ class Parser:
             for pointer, context in sorted(reserved_contexts.items()):
                 pointer = self.get_tracked_pointer(pointer)
                 self.reserve_context(pointer, context)
+        self.valid_opcode_cache = {}
+        if hasattr(self, 'VALID_OPCODE_CACHE'):
+            self.valid_opcode_cache = self.VALID_OPCODE_CACHE
         self.read_scripts()
 
     def clean_config(self):
@@ -1313,7 +1321,6 @@ class Parser:
     def get_or_create_script(self, pointer):
         if pointer in self.scripts:
             script = self.scripts[pointer]
-            script.truncate()
         else:
             script = self.Script(pointer=self.get_tracked_pointer(pointer),
                                  parser=self)
@@ -1376,7 +1383,10 @@ class Parser:
                 instruction.manifest['is_variable_length']:
             variable_length = True
 
-        if self.USE_BYTECODE_CACHE and variable_length is False:
+        tracked = any(isinstance(p, TrackedPointer)
+                      for p in instruction.parameters.values())
+        if self.USE_BYTECODE_CACHE \
+                and variable_length is False and not tracked:
             signature = instruction.signature
             assert signature is not None
             if signature in self.INSTRUCTION_BYTECODE_CACHE:
