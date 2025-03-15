@@ -293,7 +293,10 @@ class Unpacker:
     def split_address_label(self, label):
         if ',' in label:
             label, offset = label.split(',')
-            offset = int(offset)
+            if offset.startswith('0x'):
+                offset = int(offset, 0x10)
+            else:
+                offset = int(offset)
         else:
             offset = 0
         return label, offset
@@ -396,7 +399,7 @@ class Unpacker:
                     key2_address = self.get_address(key2)
                     if key2_address is None and key1_address is not None:
                         key2_address = key1_address - offset
-                        assert key2_address > 0
+                        assert key2_address >= 0
                         if key2_address not in self.addresses[key2]:
                             self.addresses[key2].add(key2_address)
                             local_updated.add(key2)
@@ -501,6 +504,9 @@ class Unpacker:
             self.addresses[self.parent.flabel].add(uncle.slabel)
 
     def check_null_pointer(self, pointer):
+        if isinstance(pointer, int) and self.get_setting('valid_range'):
+            lower, upper = self.get_setting('valid_range')
+            return not lower <= pointer <= upper
         if pointer in (None, 0):
             return True
         MAX_POINTER = (1 << (self.get_setting('pointer_length') * 8)) - 1
@@ -521,7 +527,14 @@ class Unpacker:
         self.parent.packed.seek(self.start-self.parent.start)
         pointers = []
         non_null = set()
+        maximum = None
+        if isinstance(self.start, int) and isinstance(self.finish, int):
+            maximum = int((self.finish-self.start) / pointer_length)
         while True:
+            if maximum is not None and len(pointers) >= maximum:
+                assert len(pointers) == maximum
+                break
+
             if non_null:
                 lowest = min(non_null)
                 pointer_area = pointer_length * len(pointers)
@@ -636,6 +649,11 @@ class Unpacker:
                 self.packed.seek(0, SEEK_END)
                 if self.packed.tell() == 0:
                     pointer_names = []
+                else:
+                    self.guess_num_pointers()
+                    pointer_names = [None] * self.evaluate(
+                            self.get_setting('num_pointers'))
+
         if num_pointers:
             assert len(pointer_names) == self.evaluate(num_pointers)
         self.packed.seek(0)
@@ -723,6 +741,7 @@ class Unpacker:
             item = self.packed.read(item_size)
             assert len(item) == item_size
             items.append(item)
+
         return items
 
     def unpack(self):
@@ -810,9 +829,19 @@ class Unpacker:
 
     def repack_pointed_list(self):
         SORTED_ORDER = False
-        PRESERVE_POINTERS = True
+        PRESERVE_POINTERS = False
         OPTIMIZE = False
+
         pointsec = self.tree[self.config['linked_pointers']]
+        pointer_order = pointsec.get_setting('pointer_order')
+
+        if pointer_order == 'sorted':
+            SORTED_ORDER = True
+        elif pointer_order == 'preserve':
+            PRESERVE_POINTERS = True
+        else:
+            raise Exception('Unknown pointer order.')
+
         keys = {k for k in pointsec.unpacked if k is not None}
         assert keys <= set(self.unpacked.keys())
         if keys != set(self.unpacked.keys()):

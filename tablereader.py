@@ -10,9 +10,12 @@ from sys import stdout
 
 from _io import BufferedRandom, BytesIO
 
+from .nested_data_unpacker import Unpacker
 from .psx_file_extractor import SANDBOX_PATH, FileManager
 from .utils import (MODULE_FILEPATH, cached_property, clached_property,
-                    classproperty, ips_patch, map_to_snes, md5hash, random,
+                    classproperty)
+from .utils import fake_yaml as yaml
+from .utils import (ips_patch, map_to_snes, md5hash, random,
                     read_lines_nocomment, read_multi, write_multi)
 
 try:
@@ -930,7 +933,8 @@ class TableSpecs:
     def __init__(self, specfile, pointer=None, count=None,
                  grouped=False, pointed=False, delimit=False,
                  pointerfilename=None):
-        self.attributes = []
+        self.filename = None
+        self.attributes = None
         self.bitnames = {}
         self.total_size = 0
         self.pointer = pointer
@@ -940,6 +944,16 @@ class TableSpecs:
         self.pointedpoint1 = False
         self.delimit = delimit
         self.pointerfilename = pointerfilename
+        if self.count is None and self.pointer is None and \
+                self.pointerfilename is None:
+            self.packed = True
+            self.load_packed(specfile)
+        else:
+            self.packed = False
+            self.load_standard(specfile)
+
+    def load_standard(self, specfile):
+        self.attributes = []
         for line in open(specfile):
             line = line.strip()
             if not line or line[0] == "#":
@@ -969,6 +983,40 @@ class TableSpecs:
                 self.total_size += (int(a)*int(b))
             self.attributes.append((name, size, other))
 
+    def load_packed(self, specfile):
+        self.pointer, self.packed_finish = None, None
+        self.attributes = {}
+        with open(specfile) as f:
+            self.unpacker_config = yaml.safe_load(f.read())
+            f.seek(0)
+            for line in f:
+                if line.startswith('#!'):
+                    line = line[2:].strip()
+                    while '  ' in line:
+                        line = line.replace('  ', ' ')
+                    if line.count('=') == 1:
+                        line = line.split()
+                        if len(line) != 3 or line[1] != '=':
+                            continue
+                        name, _, source = line
+                        self.attributes[name] = source
+                    elif line.count('-') == 1 and ' ' not in line:
+                        start, finish = line.split('-')
+                        try:
+                            start = int(start, 0x10)
+                            finish = int(finish, 0x10)
+                        except ValueError:
+                            continue
+                        assert finish > start
+                        self.pointer = start
+                        self.packed_finish = finish
+        self.original_pointer = self.pointer
+        self.packed_length = self.packed_finish - self.pointer
+        if 'filename' in self.unpacker_config:
+            self.filename = self.unpacker_config['filename']
+        else:
+            self.filename = GLOBAL_OUTPUT
+
 
 @total_ordering
 class TableObject(object):
@@ -982,18 +1030,21 @@ class TableObject(object):
         assert hasattr(self, 'specs')
         assert isinstance(self.specs.total_size, int)
         assert index is not None
-        if hasattr(self.specs, 'subfile'):
-            self.filename = path.join(SANDBOX_PATH, self.specs.subfile)
-        else:
-            self.filename = filename
-        if self.filename != GLOBAL_OUTPUT and PSX_FILE_MANAGER is None:
-            create_psx_file_manager(filename)
         self.pointer = pointer
         self.groupindex = groupindex
         self.variable_size = size
         self.index = index
-        if filename:
-            self.read_data(None, pointer)
+        if self.specs.packed:
+            self.filename = filename
+        else:
+            if hasattr(self.specs, 'subfile'):
+                self.filename = path.join(SANDBOX_PATH, self.specs.subfile)
+            else:
+                self.filename = filename
+            if self.filename != GLOBAL_OUTPUT and PSX_FILE_MANAGER is None:
+                create_psx_file_manager(filename)
+            if filename:
+                self.read_data(None, pointer)
         key = (type(self), self.index)
         assert key not in GRAND_OBJECT_DICT
         GRAND_OBJECT_DICT[key] = self
@@ -1426,6 +1477,9 @@ class TableObject(object):
         return specsattrs
 
     def read_data(self, filename=None, pointer=None):
+        if self.specs.packed:
+            return self.read_packed_data()
+
         if pointer is None:
             pointer = self.pointer
         if filename is None:
@@ -1457,6 +1511,47 @@ class TableObject(object):
                     value.append(read_multi(f, numbytes))
             self.old_data[name] = copy(value)
             setattr(self, name, value)
+
+    def read_packed_data(self):
+        main = self._unpacked
+        self.old_data = {}
+        for name, source in self.specs.attributes.items():
+            current = main
+            sequence = source.split('.')
+            if sequence[0] in ['main', '']:
+                sequence = sequence[1:]
+            for key in sequence:
+                if isinstance(current, dict) and key in current:
+                    current = current[key]
+                elif hasattr(current, key):
+                    current = getattr(current, key)
+                else:
+                    raise Exception(f'Unable to find value at {source}')
+            self.old_data[name] = copy(current)
+            setattr(self, name, current)
+
+    def update_packed_data(self):
+        main = self._unpacked
+        self.old_data = {}
+        for name, source in self.specs.attributes.items():
+            current = main
+            sequence = source.split('.')
+            if sequence[0] in ['main', '']:
+                sequence = sequence[1:]
+            for key in sequence:
+                if key == sequence[-1]:
+                    break
+                if isinstance(current, dict) and key in current:
+                    current = current[key]
+                elif hasattr(current, key):
+                    current = getattr(current, key)
+                else:
+                    raise Exception(f'Unable to find value at {source}')
+            value = getattr(self, name)
+            if isinstance(current, dict) and key in current:
+                current[key] = value
+            else:
+                current.key = value
 
     def copy_data(self, another):
         for name, _, _ in self.specs.attributes:
@@ -1515,6 +1610,9 @@ class TableObject(object):
 
     @classmethod
     def write_all(cls, filename):
+        if cls.specs.packed:
+            return cls.write_all_packed(filename)
+
         if cls.specs.pointedpoint1 or not (
                 cls.specs.grouped or cls.specs.pointed or cls.specs.delimit):
             for o in cls.every:
@@ -1588,6 +1686,42 @@ class TableObject(object):
                 f.seek(pointer)
                 f.write(chr(cls.specs.delimitval))
                 pointer += 1
+
+    @classmethod
+    def write_all_packed(cls, filename):
+        unpacked = cls._full_unpacked
+        objects = {}
+        for o in cls.every:
+            o.update_packed_data()
+            objects[o.pointer] = o
+
+        if 'main_pointers' in unpacked:
+            for p in unpacked['main_pointers']:
+                if p is None:
+                    assert p not in objects
+                    assert p not in unpacked['main_data']
+                    continue
+                if p not in objects:
+                    raise Exception(
+                            f'{cls}: Missing unpacker data for pointer {p:x}')
+                unpacked['main_data'][p] = objects[p]._unpacked
+        else:
+            unpacked['main_data'] = [v._unpacked for v in objects.values()]
+
+        config = cls.specs.unpacker_config
+        pointer = cls.specs.pointer
+        filename = cls.specs.filename
+        unpacker = Unpacker(config)
+        unpacker.set_unpacked(unpacked)
+        packed = unpacker.repack()
+        if len(packed) > cls.specs.packed_length and \
+                pointer == cls.specs.original_pointer:
+            print(f'WARNING: {cls.__name__} packed data '
+                  'exceeds original length.')
+
+        f = get_open_file(filename)
+        f.seek(pointer)
+        f.write(packed)
 
     def preprocess(self):
         return
@@ -2162,7 +2296,9 @@ def get_table_objects(objtype, filename=None):
         objects.append(obj)
         return size
 
-    if pointerfilename is not None:
+    if objtype.specs.packed:
+        objects = get_packed_objects(objtype, objtype.specs.filename)
+    elif pointerfilename is not None:
         for line in open(path.join(tblpath, pointerfilename)):
             line = line.strip()
             if not line or line[0] == '#':
@@ -2255,6 +2391,43 @@ def get_table_objects(objtype, filename=None):
     return get_table_objects(objtype, filename=filename)
 
 
+def get_packed_objects(objtype, filename):
+    config = objtype.specs.unpacker_config
+    pointer = objtype.specs.pointer
+    finish = objtype.specs.packed_finish
+    f = get_open_file(filename)
+    f.seek(pointer)
+    data = f.read(finish-pointer)
+    unpacker = Unpacker(config)
+    unpacker.set_packed(data)
+    assert not hasattr(objtype, '_unpacked')
+    unpacked = unpacker.unpack()
+    objtype._full_unpacked = unpacked
+    if 'main_pointers' in unpacked:
+        main_data = []
+        for p in unpacked['main_pointers']:
+            if p is None:
+                main_data.append((None, None))
+                continue
+            main_data.append((p, unpacked['main_data'][p]))
+    else:
+        assert isinstance(unpacked['main_data'], list)
+        main_data = list(enumerate(unpacked['main_data']))
+
+    objects = []
+    for p, data in main_data:
+        if p is None and data is None:
+            continue
+        assert isinstance(data, dict)
+        obj = objtype(filename, pointer=p, index=len(objects),
+                      groupindex=0)
+        obj._unpacked = dict(data)
+        obj.read_data()
+        objects.append(obj)
+
+    return objects
+
+
 def set_table_specs(objects, filename=None):
     if filename is None:
         filename = GLOBAL_TABLE
@@ -2337,7 +2510,9 @@ def set_table_specs(objects, filename=None):
             point1 = False
             delimit = False
             pointdelimit = False
-            if len(line) <= 3:
+            if len(line) <= 2:
+                objname, tablefilename = tuple(line)
+            elif len(line) <= 3:
                 objname, tablefilename, pointerfilename = tuple(line)
             else:
                 objname, tablefilename, pointer, count = tuple(line)
