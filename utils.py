@@ -696,7 +696,8 @@ class SnesGfxManager:
         return data
 
     @staticmethod
-    def tiles_to_pixels(tiles, width=8):
+    def tiles_to_pixels(tiles, width=1):
+        # Width is in columns of tiles, NOT pixels
         height = len(tiles) // width
         rows = []
         for y in range(height):
@@ -781,12 +782,14 @@ class SnesGfxManager:
     @staticmethod
     def pixels_to_image(pixels, width, height, palette):
         from PIL import Image
+        assert len(pixels) >= width * height
         data = bytes(pixels)
         im = Image.frombytes(mode='P', size=(width, height), data=data)
         if isinstance(palette[0], int):
             palette = SnesGfxManager.snes_palette_to_rgb(palette)
         palette = [c for color in palette for c in color]
         im.putpalette(palette)
+        im.info['transparency'] = 0
         return im
 
     @staticmethod
