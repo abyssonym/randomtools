@@ -1693,7 +1693,8 @@ class TableObject(object):
         objects = {}
         for o in cls.every:
             o.update_packed_data()
-            objects[o.pointer] = o
+            p = o.pointer - cls.specs.pointer
+            objects[p] = o
 
         if 'main_pointers' in unpacked:
             for p in unpacked['main_pointers']:
@@ -1720,8 +1721,27 @@ class TableObject(object):
                   'exceeds original length.')
 
         f = get_open_file(filename)
+        ignore_sections = {}
+        for section in cls.specs.unpacker_config:
+            if 'data_type' not in section:
+                continue
+            if section['data_type'] != 'ignore':
+                if 'ignore' in str(section):
+                    raise NotImplementedError
+                continue
+            start, finish = section['start'], section['finish']
+            length = finish-start
+            f.seek(start)
+            blob = f.read(length)
+            assert len(blob) == length
+            ignore_sections[start] = blob
+
         f.seek(pointer)
         f.write(packed)
+
+        for start, blob in ignore_sections.items():
+            f.seek(start)
+            f.write(blob)
 
     def preprocess(self):
         return
@@ -2419,7 +2439,7 @@ def get_packed_objects(objtype, filename):
         if p is None and data is None:
             continue
         assert isinstance(data, dict)
-        obj = objtype(filename, pointer=p, index=len(objects),
+        obj = objtype(filename, pointer=pointer+p, index=len(objects),
                       groupindex=0)
         obj._unpacked = dict(data)
         obj.read_data()

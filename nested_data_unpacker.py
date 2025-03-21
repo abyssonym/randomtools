@@ -528,6 +528,8 @@ class Unpacker:
         pointers = []
         non_null = set()
         maximum = None
+        if self.start is None or self.finish is None:
+            self.propagate_addresses()
         if isinstance(self.start, int) and isinstance(self.finish, int):
             maximum = int((self.finish-self.start) / pointer_length)
         while True:
@@ -535,7 +537,7 @@ class Unpacker:
                 assert len(pointers) == maximum
                 break
 
-            if non_null:
+            if non_null and self.start <= relative_to:
                 lowest = min(non_null)
                 pointer_area = pointer_length * len(pointers)
                 if lowest == pointer_area:
@@ -771,7 +773,7 @@ class Unpacker:
         if 'data_type' not in self.config:
             raise Exception(f'Undefined data type: {self.label}')
 
-        if self.config['data_type'] == 'blob':
+        if self.config['data_type'] in ('blob', 'ignore'):
             assert unpacked is None
             self.packed.seek(0)
             data = self.packed.read()
@@ -958,7 +960,7 @@ class Unpacker:
             packed = self.repack_pointed_list()
         elif self.is_pointers:
             packed = self.repack_pointers()
-        elif self.config['data_type'] == 'blob':
+        elif self.config['data_type'] in ('blob', 'ignore'):
             assert isinstance(self.unpacked, bytes)
             packed = self.unpacked
         else:
