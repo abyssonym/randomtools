@@ -90,7 +90,7 @@ class Unpacker:
 
 
     INHERITABLE_SETTINGS = {
-        'byteorder', 'pointer_length',
+        'byteorder', 'pointer_length', 'pointer_order',
         }
 
     def __init__(self, config, label=None, parent=None):
