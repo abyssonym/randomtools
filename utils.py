@@ -938,7 +938,10 @@ class NamedStruct:
             raise TypeError(f'NamedStruct takes one non-keyword argument.')
 
         if args:
-            self._original_values = self.unpack(args[0])
+            data = args[0]
+            if data is None:
+                data = b'\x00' * self.expected_length
+            self._original_values = self.unpack(data)
         else:
             self._original_values = OrderedDict()
             for field in self.FIELD_NAMES:
@@ -965,6 +968,12 @@ class NamedStruct:
     def __hash__(self):
         return self.packed.__hash__()
 
+    def __eq__(self, other):
+        return self.packed == other.packed
+
+    def __lt__(self, other):
+        return self.packed < other.packed
+
     @classmethod
     def verify(self):
         intersection = set(self.FIELD_NAMES) & set(dir(self))
@@ -984,6 +993,10 @@ class NamedStruct:
     @property
     def changed(self):
         return self.unpacked != self._original_values
+
+    @property
+    def expected_length(self):
+        return struct.calcsize(self.FORMAT_STRING)
 
     def pack(self):
         return struct.pack(
