@@ -766,6 +766,8 @@ class MaskStruct:
         self._byteorders = byteorders or {}
         self._collapsible = collapsible or {}
         self._data_types = data_types or {}
+        self._list_bit_lengths = {}
+        self._list_endianness = {}
 
         if length is None:
             length = 0
@@ -803,13 +805,35 @@ class MaskStruct:
                 else:
                     self._collapsible[attr] = False
 
+            data_type = self._data_types[attr]
+            if data_type.startswith('list'):
+                _, num_items, endianness = data_type.split(',')
+                num_items = int(num_items)
+                num_bits = f'{bigend_mask:b}'.count('1')
+                if num_bits % num_items:
+                    raise Exception(f'{num_items} does not divide '
+                                    f'evenly the {attr} field.')
+                self._list_bit_lengths[attr] = num_bits // num_items
+                self._list_endianness[attr] = endianness
+
             if attr not in self._byteorders:
-                if self._data_types[attr] == 'str':
+                if data_type == 'str':
+                    self._byteorders[attr] = 'big'
+                elif data_type.startswith('lis') and \
+                        not bigend_is_split and \
+                        num_bits == num_items * 8:
                     self._byteorders[attr] = 'big'
                 elif litend_is_split and not bigend_is_split:
                     self._byteorders[attr] = 'big'
                 else:
                     self._byteorders[attr] = 'little'
+
+            if data_type == 'str':
+                self._list_bit_lengths[attr] = 8
+                self._list_endianness[attr] = self._byteorders[attr]
+
+        for attr, data_type in self._data_types.items():
+            assert data_type.startswith('list') or data_type in ('int', 'str')
 
         self._original_values = self._unpack(data)
         for attr, value in sorted(self._original_values.items()):
@@ -833,12 +857,19 @@ class MaskStruct:
             value = data & mask
             if self._collapsible[attr]:
                 value, _ = mask_compress(value, mask)
-            if data_type in ('str', 'list'):
+            if data_type[:3] in ('str', 'lis'):
+                bit_length = self._list_bit_lengths[attr]
+                endianness = self._list_endianness[attr]
+                mini_mask = (2**bit_length)-1
                 sequence = []
                 while mask:
-                    sequence.insert(0, value & mask & 0xff)
-                    mask >>= 8
-                    value >>= 8
+                    v = value & mask & mini_mask
+                    if endianness == 'big':
+                        sequence.insert(0, v)
+                    elif endianness == 'little':
+                        sequence.append(v)
+                    mask >>= bit_length
+                    value >>= bit_length
                 if data_type == 'str':
                     value = bytes(sequence)
                 else:
@@ -855,11 +886,17 @@ class MaskStruct:
             if isinstance(value, bytes):
                 value = [c for c in value]
             if isinstance(value, list):
+                bit_length = self._list_bit_lengths[attr]
+                endianness = self._list_endianness[attr]
                 temp = 0
                 value = list(value)
+                if endianness == 'little':
+                    value = list(reversed(value))
                 while value:
-                    temp <<= 8
-                    temp |= value.pop(0)
+                    temp <<= bit_length
+                    v = value.pop(0)
+                    assert len(f'{v:b}') <= bit_length
+                    temp |= v
                 value = temp
             if self._collapsible[attr]:
                 value = mask_decompress(value, mask)

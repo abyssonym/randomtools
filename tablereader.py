@@ -1000,6 +1000,12 @@ class TableSpecs:
                             continue
                         name, _, source = line
                         self.attributes[name] = source
+                    elif line.count(':') == 1:
+                        line = line.replace(' ', '')
+                        source, names = line.split(':')
+                        names = names.split(',')
+                        for name in names:
+                            self.attributes[name] = f'{source}.{name}'
                     elif line.count('-') == 1 and ' ' not in line:
                         start, finish = line.split('-')
                         try:
