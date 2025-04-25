@@ -5,6 +5,7 @@ from io import BytesIO
 from os import SEEK_END
 from sys import argv
 
+from randomtools.utils import MaskStruct
 from randomtools.utils import fake_yaml as yaml
 from randomtools.utils import search_nested_key
 
@@ -178,6 +179,11 @@ class Unpacker:
     def is_regular_list(self):
         return 'data_type' in self.config and \
                 self.config['data_type'] == 'regular_list'
+
+    @property
+    def is_mask_struct(self):
+        return 'data_type' in self.config and \
+                self.config['data_type'] == 'mask_struct'
 
     @property
     def root(self):
@@ -440,12 +446,18 @@ class Unpacker:
                         updated = True
 
     def guess_start(self):
-        if self.start:
+        if self.start is not None:
             return
 
         if self.parent is None:
             self.addresses[self.slabel].add(0)
             return
+
+        if self.get_setting('start') is self.get_setting('finish') is None:
+            if self.parent.start is not None and \
+                    len(self.parent.children) >= 1 and \
+                    self.parent.children[0] is self:
+                self.addresses[self.slabel].add(self.parent.start)
 
     def guess_finish(self, override=False):
         if self.finish is not None:
@@ -753,6 +765,35 @@ class Unpacker:
 
         return items
 
+    def unpack_mask_struct(self):
+        masks = self.get_setting('masks')
+        byteorders = {attr: masks[attr]['byteorder'] for attr in masks
+                      if 'byteorder' in masks[attr]}
+        collapsible = {attr: masks[attr]['collapse'] for attr in masks
+                       if 'collapse' in masks[attr]}
+        assert all(isinstance(v, bool) for v in collapsible.values())
+        data_types = {attr: masks[attr]['data_type'] for attr in masks
+                      if 'data_type' in masks[attr]}
+        masks = {attr: masks[attr]['mask'] for attr in masks}
+        numeric_masks = {}
+        for attr in masks:
+            mask = masks[attr]
+            if isinstance(mask, str):
+                while '  ' in mask:
+                    mask = mask.replace('  ', ' ')
+                mask = mask.strip().split()
+                mask = bytes([int(c, 0x10) for c in mask])
+                mask = int.from_bytes(mask, byteorder='big')
+            numeric_masks[attr] = mask
+        length = self.get_setting('total_length')
+        if length is None:
+            length = self.finish - self.start
+        self.packed.seek(0)
+        data = self.packed.read(length)
+        return MaskStruct(data, numeric_masks, length=len(data),
+                          data_types=data_types, byteorders=byteorders,
+                          collapsible=collapsible)
+
     def unpack(self):
         if hasattr(self, 'unpacked'):
             return self.unpacked
@@ -795,6 +836,9 @@ class Unpacker:
 
         if self.is_regular_list:
             unpacked = self.unpack_regular_list()
+
+        if self.is_mask_struct:
+            unpacked = self.unpack_mask_struct()
 
         if unpacked is None:
             raise Exception(f'Unknown data type: {self.label}')
@@ -925,6 +969,9 @@ class Unpacker:
             self.table.pointers = pointers
         return self.table
 
+    def repack_mask_struct(self):
+        return self.unpacked.packed
+
     def partial_repack(self):
         if self is self.root and not hasattr(self, '_packed_cache'):
             self._packed_cache = {}
@@ -967,6 +1014,8 @@ class Unpacker:
             packed = self.repack_pointed_list()
         elif self.is_pointers:
             packed = self.repack_pointers()
+        elif self.is_mask_struct:
+            packed = self.repack_mask_struct()
         elif self.config['data_type'] in ('blob', 'ignore'):
             assert isinstance(self.unpacked, bytes)
             packed = self.unpacked

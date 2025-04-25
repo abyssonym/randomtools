@@ -542,6 +542,25 @@ def read_lines_nocomment(filename):
     return lines
 
 
+def reverse_byte_order(value, length=None, mask=None):
+    if mask is None:
+        mask = (2**(length*8)) - 1
+    assert mask
+    while not mask & 1:
+        mask >>= 1
+
+    reverse_value = 0
+    assert mask & 1
+    while True:
+        reverse_value <<= 8
+        reverse_value |= value & 0xff
+        value >>= 8
+        mask >>= 8
+        if not mask:
+            break
+    return reverse_value
+
+
 def rewrite_snes_checksum(filename, lorom=False):
     f = open(filename, 'r+b')
     f.seek(0, 2)
@@ -737,9 +756,16 @@ class fake_yaml:
 
 
 class MaskStruct:
-    def __init__(self, data, masks, length=None, byteorder='little'):
+    WARNED = False
+
+    def __init__(self, data, masks, length=None, data_types=None,
+                 byteorders=None, collapsible=None):
+        assert isinstance(data, bytes)
+        self._original_packed = data
         self._masks = masks
-        self._byteorder = byteorder
+        self._byteorders = byteorders or {}
+        self._collapsible = collapsible or {}
+        self._data_types = data_types or {}
 
         if length is None:
             length = 0
@@ -747,40 +773,118 @@ class MaskStruct:
             while biggest:
                 length += 1
                 biggest >>= 8
+            if length != len(data) and not MaskStruct.WARNED:
+                print('WARNING: Length/data mismatch.')
+                MaskStruct.WARNED = True
         self._length = length
 
-        if not isinstance(data, int):
-            data = int.from_bytes(data, byteorder=byteorder)
+        bigend_data = int.from_bytes(data, byteorder='big')
+        litend_data = int.from_bytes(data, byteorder='little')
 
-        self._original_values = self._calculate_values(data)
+        for attr in self._masks:
+            if attr not in self._data_types:
+                self._data_types[attr] = 'int'
+
+            bigend_mask = self._masks[attr]
+            litend_mask = reverse_byte_order(bigend_mask,
+                                             length=self._length)
+            bigend_is_split = '0' in f'{bigend_mask:b}'.rstrip('0')
+            litend_is_split = '0' in f'{litend_mask:b}'.rstrip('0')
+            if attr not in self._collapsible:
+                if self._data_types[attr] == 'int':
+                    if attr in self._byteorders and \
+                            self._byteorders[attr] == 'big' and \
+                            not bigend_is_split:
+                        self._collapsible[attr] = False
+                    elif not litend_is_split:
+                        self._collapsible[attr] = False
+                    else:
+                        self._collapsible[attr] = True
+                else:
+                    self._collapsible[attr] = False
+
+            if attr not in self._byteorders:
+                if self._data_types[attr] == 'str':
+                    self._byteorders[attr] = 'big'
+                elif litend_is_split and not bigend_is_split:
+                    self._byteorders[attr] = 'big'
+                else:
+                    self._byteorders[attr] = 'little'
+
+        self._original_values = self._unpack(data)
         for attr, value in sorted(self._original_values.items()):
             assert not hasattr(self, attr)
             setattr(self, attr, value)
 
-    def _calculate_values(data):
+    def _unpack(self, data):
+        original_data = data
         result = {}
+        bigend_data = int.from_bytes(data, byteorder='big')
+        litend_data = int.from_bytes(data, byteorder='little')
         for attr, mask in sorted(self._masks.items()):
-            value = mask_compress(data, mask)
+            data = bigend_data
+            data_type = self._data_types[attr]
+            if self._byteorders[attr] == 'little':
+                data = litend_data
+                mask = reverse_byte_order(mask, length=self._length)
+            while mask & 1 == 0:
+                mask >>= 1
+                data >>= 1
+            value = data & mask
+            if self._collapsible[attr]:
+                value, _ = mask_compress(value, mask)
+            if data_type in ('str', 'list'):
+                sequence = []
+                while mask:
+                    sequence.insert(0, value & mask & 0xff)
+                    mask >>= 8
+                    value >>= 8
+                if data_type == 'str':
+                    value = bytes(sequence)
+                else:
+                    value = sequence
             result[attr] = value
         return result
 
+    def _repack(self, unpacked):
+        bigend_data = 0
+        for attr, mask in sorted(self._masks.items()):
+            if self._byteorders[attr] == 'little':
+                mask = reverse_byte_order(mask, length=self._length)
+            value = unpacked[attr]
+            if isinstance(value, bytes):
+                value = [c for c in value]
+            if isinstance(value, list):
+                temp = 0
+                value = list(value)
+                while value:
+                    temp <<= 8
+                    temp |= value.pop(0)
+                value = temp
+            if self._collapsible[attr]:
+                value = mask_decompress(value, mask)
+            else:
+                while mask & 1 == 0:
+                    mask >>= 1
+                    value <<= 1
+            if self._byteorders[attr] == 'little':
+                value = reverse_byte_order(value, length=self._length)
+            bigend_data |= value
+        return bigend_data.to_bytes(length=self._length, byteorder='big')
+
     @property
     def unpacked(self):
-        data = 0
-        for attr, mask in sorted(self._masks.items()):
-            value = getattr(self, attr)
-            value = mask_decompress(value, mask)
-            data |= value
-        test = self._calculate_values(data)
-        for attr, value in test.items():
-            if getattr(self, attr) != value:
-                raise Exception(f'Mask conflict: {attr}, {value:x}')
-        return data
+        return {attr: getattr(self, attr) for attr in self._masks}
 
     @property
     def packed(self):
-        return self.unpacked.to_bytes(length=self._length,
-                                      byteorder=self._byteorder)
+        unpacked = self.unpacked
+        packed = self._repack(unpacked)
+        test = self._unpack(packed)
+        for attr in unpacked:
+            if unpacked[attr] != test[attr]:
+                raise Exception(f'Mask conflict: {attr}')
+        return packed
 
 
 class NamedStruct:

@@ -1109,6 +1109,12 @@ class TableObject(object):
         return cls.every
 
     @classproperty
+    def count(cls):
+        if cls.specs.count is not None:
+            return cls.specs.count
+        return len(cls.every)
+
+    @classproperty
     def randomize_order(cls):
         return cls.every
 

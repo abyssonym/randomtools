@@ -5,7 +5,7 @@ from sys import argv
 
 from .utils import cached_property
 from .utils import fake_yaml as yaml
-from .utils import mask_compress, mask_decompress
+from .utils import mask_compress, mask_decompress, reverse_byte_order
 
 
 def hexify(s):
@@ -16,25 +16,6 @@ def hexify(s):
         w = ' '.join('{0:0>2x}'.format(c) for c in w)
         result.append(w)
     return ' '.join(result)
-
-
-def reverse_byte_order(value, length=None, mask=None):
-    if mask is None:
-        mask = (2**(length*8)) - 1
-    assert mask
-    while not mask & 1:
-        mask >>= 1
-
-    reverse_value = 0
-    assert mask & 1
-    while True:
-        reverse_value <<= 8
-        reverse_value |= value & 0xff
-        value >>= 8
-        mask >>= 8
-        if not mask:
-            break
-    return reverse_value
 
 
 def mask_shift_left(value, mask):
