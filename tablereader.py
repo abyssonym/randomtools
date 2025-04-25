@@ -10,8 +10,8 @@ from sys import stdout
 
 from _io import BufferedRandom, BytesIO
 
-from .nested_data_unpacker import Unpacker
 from .psx_file_extractor import SANDBOX_PATH, FileManager
+from .unpacker import Unpacker
 from .utils import (MODULE_FILEPATH, cached_property, clached_property,
                     classproperty)
 from .utils import fake_yaml as yaml
