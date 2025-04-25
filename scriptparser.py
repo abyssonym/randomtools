@@ -5,6 +5,7 @@ from sys import argv
 
 from .utils import cached_property
 from .utils import fake_yaml as yaml
+from .utils import mask_compress, mask_decompress
 
 
 def hexify(s):
@@ -15,15 +16,6 @@ def hexify(s):
         w = ' '.join('{0:0>2x}'.format(c) for c in w)
         result.append(w)
     return ' '.join(result)
-
-
-def length_to_num_bits(length):
-    length = int(round(length * 10))
-    length_bytes = length // 10
-    length_bits = length % 10
-    assert 0 <= length_bits <= 7
-    num_bits = (length_bytes * 8) + length_bits
-    return num_bits
 
 
 def reverse_byte_order(value, length=None, mask=None):
@@ -52,47 +44,6 @@ def mask_shift_left(value, mask):
         mask >>= 1
         count += 1
     return value << count
-
-
-def mask_compress(value, mask=None):
-    if mask is None:
-        mask = value
-    i, j = 0, 0
-    result_value, result_mask = 0, 0
-    while True:
-        if not mask >> i:
-            assert not value >> i
-            break
-        ibit = (1 << i)
-        if (mask & ibit):
-            jbit = (1 << j)
-            result_mask |= jbit
-            if value & ibit:
-                result_value |= jbit
-            j += 1
-        else:
-            assert not (value & ibit)
-        i += 1
-    assert bin(result_mask).count('0') == 1
-    return result_value, result_mask
-
-
-def mask_decompress(value, mask):
-    decompressed = 0
-    counter = 0
-    while True:
-        bitmask = 1 << counter
-        if bitmask > mask:
-            break
-        if bitmask & mask:
-            if value & 1:
-                decompressed |= bitmask
-            value >>= 1
-        counter += 1
-    if value:
-        raise Exception('Value overflowed mask.')
-    assert not value
-    return decompressed
 
 
 assert mask_decompress(0x2b4, 0xeff) == 0x4b4
