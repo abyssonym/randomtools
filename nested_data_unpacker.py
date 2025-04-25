@@ -99,6 +99,8 @@ class Unpacker:
             label = '_root'
         else:
             assert not label.startswith('_')
+        if parent is None:
+            assert label == '_root'
         assert label is not None
         assert not label.startswith('@')
         self.label = label
@@ -449,6 +451,9 @@ class Unpacker:
         if self.finish is not None:
             return
 
+        if '!eof' in self.addresses[self.flabel]:
+            self.addresses[self.flabel].add('@@_root')
+
         if 'finish' in self.config and not override:
             return
 
@@ -537,7 +542,7 @@ class Unpacker:
                 assert len(pointers) == maximum
                 break
 
-            if non_null and self.start <= relative_to:
+            if non_null and (self.start <= relative_to or relative_to < 0):
                 lowest = min(non_null)
                 pointer_area = pointer_length * len(pointers)
                 if lowest == pointer_area:
@@ -581,6 +586,8 @@ class Unpacker:
     def preclean(self):
         self.guess_start()
         self.guess_finish()
+        if self.finish and self.start is None:
+            self.guess_start()
         for c in self.children:
             c.preclean()
 
