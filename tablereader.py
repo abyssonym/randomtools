@@ -1563,7 +1563,8 @@ class TableObject(object):
             if isinstance(current, dict) and key in current:
                 current[key] = value
             else:
-                current.key = value
+                getattr(current, key)
+                setattr(current, key, value)
 
     def copy_data(self, another):
         for name, _, _ in self.specs.attributes:
