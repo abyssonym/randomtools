@@ -142,7 +142,7 @@ class Unpacker:
             total_length = self.config['total_length']
             self.addresses[f'@@{label}'].add(f'@{label},{total_length}')
 
-        if self.sections is not None:
+        if self.is_recursive and self.sections is not None:
             for key in self.config:
                 if not isinstance(self.config[key], dict):
                     continue
@@ -162,8 +162,9 @@ class Unpacker:
 
     @property
     def is_recursive(self):
-        return 'data_type' in self.config and \
-                self.config['data_type'] == 'recursive'
+        if 'data_type' in self.config:
+            return self.config['data_type'] == 'recursive'
+        return self.parent is None
 
     @property
     def is_pointers(self):
@@ -802,8 +803,7 @@ class Unpacker:
             return None
 
         unpacked = None
-        if self.sections is not None:
-            assert self.is_recursive or self.parent is None
+        if self.is_recursive and self.sections is not None:
             unpacked = {}
             for key in self.sections:
                 assert self.sections[key] in self.children
@@ -811,7 +811,6 @@ class Unpacker:
             self.unpacked = unpacked
             return self.unpack()
 
-        assert self.parent and not self.is_recursive
         if not hasattr(self, 'packed'):
             self.set_packed()
 
@@ -1151,26 +1150,31 @@ class Unpacker:
         self.partial_repack()
         self.calculate_packed_addresses()
 
-        packed = BytesIO(b'\x00' * self.calculate_packed_size())
-        for verify in (False, True):
-            for c in self.descendents:
-                cpacked = self._packed_cache[c.label]
-                if cpacked is None:
-                    continue
-                assert cpacked is not None
-                if isinstance(cpacked, set):
-                    continue
-                if isinstance(cpacked, Unpacker.PointerTable):
-                    cpacked = cpacked.bytecode
-                assert isinstance(cpacked, bytes)
-                assert len(cpacked) == c.finish-c.start
-                packed.seek(c.start)
-                if not verify:
-                    packed.write(cpacked)
-                else:
-                    verification = packed.read(len(cpacked))
-                    assert verification == cpacked
-                assert packed.tell() == c.finish
+        if self.is_recursive:
+            packed = BytesIO(b'\x00' * self.calculate_packed_size())
+            for verify in (False, True):
+                for c in self.descendents:
+                    cpacked = self._packed_cache[c.label]
+                    if cpacked is None:
+                        continue
+                    assert cpacked is not None
+                    if isinstance(cpacked, set):
+                        continue
+                    if isinstance(cpacked, Unpacker.PointerTable):
+                        cpacked = cpacked.bytecode
+                    assert isinstance(cpacked, bytes)
+                    assert len(cpacked) == c.finish-c.start
+                    packed.seek(c.start)
+                    if not verify:
+                        packed.write(cpacked)
+                    else:
+                        verification = packed.read(len(cpacked))
+                        assert verification == cpacked
+                    assert packed.tell() == c.finish
+        else:
+            assert self is self.root
+            assert not self.descendents
+            packed = BytesIO(self.root._packed_cache[self.label])
 
         self.set_packed(packed)
         self.packed.seek(0)
