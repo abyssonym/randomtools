@@ -840,6 +840,18 @@ class MaskStruct:
             assert not hasattr(self, attr)
             setattr(self, attr, value)
 
+    def __repr__(self):
+        fieldstrs = []
+        for field, value in self.unpacked.items():
+            if isinstance(value, int):
+                value = f'{value:0>2x}'
+            if isinstance(value, list):
+                value = ','.join([f'{v:0>2x}' for v in value])
+            if isinstance(value, bytes):
+                value = hexify(value).replace(' ', '')
+            fieldstrs.append(f'{field}={value}')
+        return '<%s>' % ';'.join(fieldstrs).strip()
+
     def _unpack(self, data):
         original_data = data
         result = {}
