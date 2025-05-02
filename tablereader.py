@@ -2446,6 +2446,12 @@ def get_packed_objects(objtype, filename):
     else:
         assert isinstance(unpacked['main_data'], list)
         main_data = list(enumerate(unpacked['main_data']))
+        if config['main_data']['data_type'] == 'regular_list':
+            total_length = len(data)
+            num_items = len(main_data)
+            if total_length % num_items == 0:
+                item_length = total_length // num_items
+                main_data = [(n*item_length, i) for (n, i) in main_data]
 
     objects = []
     for p, data in main_data:
