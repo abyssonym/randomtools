@@ -100,8 +100,6 @@ class Unpacker:
             label = '_root'
         else:
             assert not label.startswith('_')
-        if parent is None:
-            assert label == '_root'
         assert label is not None
         assert not label.startswith('@')
         self.label = label
@@ -311,10 +309,10 @@ class Unpacker:
         return label, offset
 
     def get_address(self, label):
-        if label in self.address_cache:
-            return self.address_cache[label]
         assert label.startswith('@')
         label, offset = self.split_address_label(label)
+        if label in self.address_cache:
+            return self.address_cache[label] + offset
         key = label
         assert not key.startswith('@@@')
         addresses = {a for a in self.addresses[key] if isinstance(a, int)}
