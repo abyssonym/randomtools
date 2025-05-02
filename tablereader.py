@@ -1702,6 +1702,7 @@ class TableObject(object):
 
     @classmethod
     def write_all_packed(cls, filename):
+        config = cls.specs.unpacker_config
         unpacked = cls._full_unpacked
         objects = {}
         for o in cls.every:
@@ -1709,16 +1710,19 @@ class TableObject(object):
             p = o.pointer - cls.specs.pointer
             objects[p] = o
 
+        relative_to = 0
         if 'main_pointers' in unpacked:
+            if 'relative_to' in config['main_pointers']:
+                relative_to = config['main_pointers']['relative_to']
             for p in unpacked['main_pointers']:
                 if p is None:
                     assert p not in objects
                     assert p not in unpacked['main_data']
                     continue
-                if p not in objects:
+                if p+relative_to not in objects:
                     raise Exception(
                             f'{cls}: Missing unpacker data for pointer {p:x}')
-                unpacked['main_data'][p] = objects[p]._unpacked
+                unpacked['main_data'][p] = objects[p+relative_to]._unpacked
         else:
             unpacked['main_data'] = [v._unpacked for v in objects.values()]
 
@@ -2436,8 +2440,11 @@ def get_packed_objects(objtype, filename):
     assert not hasattr(objtype, '_unpacked')
     unpacked = unpacker.unpack()
     objtype._full_unpacked = unpacked
+    relative_to = 0
     if 'main_pointers' in unpacked:
         main_data = []
+        if 'relative_to' in config['main_pointers']:
+            relative_to = config['main_pointers']['relative_to']
         for p in unpacked['main_pointers']:
             if p is None:
                 main_data.append((None, None))
@@ -2458,7 +2465,8 @@ def get_packed_objects(objtype, filename):
         if p is None and data is None:
             continue
         assert isinstance(data, dict)
-        obj = objtype(filename, pointer=pointer+p, index=len(objects),
+        obj = objtype(filename,
+                      pointer=pointer+p+relative_to, index=len(objects),
                       groupindex=0)
         obj._unpacked = dict(data)
         obj.read_data()
