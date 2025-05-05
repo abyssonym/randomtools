@@ -635,6 +635,17 @@ def summarize_state():
     return a, b, c
 
 
+done_warnings = set()
+def warn(msg, repeat=False, repeat_key=None):
+    if repeat_key is None:
+        repeat_key = msg
+    if repeat is False and repeat_key in done_warnings:
+        return
+    print(f'WARNING: {msg}')
+    if repeat_key is not None:
+        done_warnings.add(repeat_key)
+
+
 def write_multi(f, value, length=2, reverse=True):
     vals = []
     while value:

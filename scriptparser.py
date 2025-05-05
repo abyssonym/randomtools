@@ -5,7 +5,9 @@ from sys import argv
 
 from .utils import cached_property
 from .utils import fake_yaml as yaml
-from .utils import mask_compress, mask_decompress, reverse_byte_order
+from .utils import mask_compress, mask_decompress, reverse_byte_order, warn
+
+VERIFY_PARSING = False
 
 
 def hexify(s):
@@ -95,6 +97,13 @@ class Instruction:
             self.set_parameters()
         if 'context' in self.manifest:
             self.script.context = self.manifest['context']
+        if VERIFY_PARSING and hasattr(self, 'old_data'):
+            verification = self.parser.instruction_to_bytecode(
+                    self, convert_pointers=False)
+            if verification != self.old_data:
+                warn(f'Destructive parsing of byte sequence: '
+                     f'{hexify(self.old_data)}',
+                     repeat_key=f'INST {self.opcode:x}')
 
     def __repr__(self):
         if not hasattr(self.parser, 'format_length'):
@@ -203,6 +212,8 @@ class Instruction:
         parameter_order = self.manifest['parameter_order']
         self.parser.data.seek(self.start_address)
         data = self.parser.data.read(self.manifest['length'])
+        if VERIFY_PARSING:
+            self.old_data = data
 
         data = int.from_bytes(data, byteorder='big')
         for parameter_name in parameter_order:
@@ -1131,7 +1142,7 @@ class Parser:
             except ValueError:
                 return None
 
-    def interpret_instruction(self, line, script=None):
+    def interpret_instruction(self, line, script=None, append=False):
         if script is not None:
             context = script.context
         else:
@@ -1190,6 +1201,10 @@ class Parser:
 
         i = self.Instruction(script=script, opcode=opcode,
                              parameters=parameters)
+        if script and append is False and \
+                script.instructions and script.instructions[-1] is i:
+            script.instructions.pop()
+            assert i not in script.instructions
         if line_number is not None:
             i.start_address = line_number
         return i
@@ -1291,7 +1306,8 @@ class Parser:
                 assert current_script is self.scripts[result.pointer]
                 continue
             if current_script:
-                result = self.interpret_instruction(line, current_script)
+                result = self.interpret_instruction(line, current_script,
+                                                    append=True)
                 if result is True:
                     # script is joined to next script
                     assert current_script.joined_after is not None
@@ -1308,7 +1324,7 @@ class Parser:
     def variable_instruction_to_bytecode(self, instruction, header=b''):
         raise NotImplementedError
 
-    def instruction_to_bytecode(self, instruction):
+    def instruction_to_bytecode(self, instruction, convert_pointers=True):
         length = instruction.manifest['length']
         variable_length = False
         if isinstance(length, str) or \
@@ -1336,7 +1352,11 @@ class Parser:
             for parameter_name in instruction.manifest['parameter_order']:
                 parameter = instruction.parameters[parameter_name]
                 if isinstance(parameter, self.TrackedPointer):
-                    parameter = parameter.converted_smart
+                    if convert_pointers:
+                        parameter = parameter.converted_smart
+                    else:
+                        parameter = self.convert_pointer(
+                                parameter, repointed=False)
                 field = instruction.manifest['fields'][parameter_name]
                 mask = field['mask']
                 if not isinstance(mask, int):
