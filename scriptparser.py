@@ -154,13 +154,12 @@ class Instruction:
     def read_from_data(self):
         self.start_address = self.parser.data.tell()
         header_size = self.parser.config['opcode_size']
-        header = self.parser.data.read(header_size)
-        header_size = len(header)
-        header = int.from_bytes(header, byteorder='big')
-        self.parser.data.seek(self.start_address)
+        data = self.parser.data.read(header_size)
 
-        opcode_key = (self.context, header)
+        opcode_key = (self.context, data)
         if opcode_key not in self.parser.valid_opcode_cache:
+            header_size = len(data)
+            header = int.from_bytes(data, byteorder='big')
             instructions = self.parser.get_instructions(context=self.context)
             originals = \
                     self.parser.config['contexts'][self.context]['_original']
@@ -183,35 +182,41 @@ class Instruction:
                         inherited_opcodes.add(opcode)
             if not valid_opcodes:
                 valid_opcodes = inherited_opcodes
-            self.parser.valid_opcode_cache[opcode_key] = valid_opcodes
+            if len(valid_opcodes) != 1:
+                def short_dump():
+                    for i in self.script.instructions:
+                        try:
+                            print(f'{i.start_address:x} {i.opcode:0>2x} '
+                                  f'{i.context}')
+                        except:
+                            print(f'{i.start_address:x} -- {i.context}')
+                if len(valid_opcodes) == 0:
+                    msg = (f'Undefined opcode at @{self.start_address:x}: '
+                           f'{header:x} (context {self.context})')
+                    short_dump()
+                    print(msg)
+                    raise Exception(msg)
+                if len(valid_opcodes) >= 2:
+                    msg = (f'Multiple opcode at @{self.start_address:x}: '
+                           f'{header:x} (context {self.context})')
+                    short_dump()
+                    print(msg)
+                    raise Exception(msg)
+            self.parser.valid_opcode_cache[opcode_key] = valid_opcodes.pop()
 
-        valid_opcodes = self.parser.valid_opcode_cache[opcode_key]
-
-        def short_dump():
-            for i in self.script.instructions:
-                try:
-                    print(f'{i.start_address:x} {i.opcode:0>2x} {i.context}')
-                except:
-                    print(f'{i.start_address:x} -- {i.context}')
-
-        if len(valid_opcodes) == 0:
-            msg = (f'Undefined opcode at @{self.start_address:x}: '
-                   f'{header:x} (context {self.context})')
-            short_dump()
-            print(msg)
-            raise Exception(msg)
-        if len(valid_opcodes) >= 2:
-            msg = (f'Multiple opcode conflict at @{self.start_address:x}: '
-                   f'{header:x} (context {self.context})')
-            short_dump()
-            print(msg)
-            raise Exception(msg)
-        self.opcode = list(valid_opcodes)[0]
+        self.opcode = self.parser.valid_opcode_cache[opcode_key]
 
         parameters = OrderedDict()
         parameter_order = self.manifest['parameter_order']
-        self.parser.data.seek(self.start_address)
-        data = self.parser.data.read(self.manifest['length'])
+        length = self.manifest['length']
+        self.end_address = self.start_address + length
+        temp = len(data)
+        if temp > length:
+            data = data[:length]
+            self.parser.data.seek(self.end_address)
+        elif temp < length:
+            self.parser.data.seek(self.start_address)
+            data = self.parser.data.read(length)
         if VERIFY_PARSING:
             self.old_data = data
 
@@ -247,9 +252,10 @@ class Instruction:
 
         if 'is_variable_length' in self.manifest \
                 and self.manifest['is_variable_length']:
+            self.parser.seek(end_address)
             self.parser.read_variable_length(self)
+            self.end_address = self.parser.data.tell()
 
-        self.end_address = self.parser.data.tell()
         self.parser.log_read_data(self.start_address, self.end_address)
 
     def set_parameters(self, **kwargs):

@@ -89,7 +89,6 @@ class Unpacker:
                                            byteorder=byteorder)
             return bytecode
 
-
     INHERITABLE_SETTINGS = {
         'byteorder', 'pointer_length', 'pointer_order',
         }
@@ -128,17 +127,17 @@ class Unpacker:
         self.tree[self.label] = self
 
         if 'start' in self.config:
-            self.addresses[f'@{label}'].add(self.config['start'])
+            self.add_address(f'@{label}', self.config['start'])
 
         if 'finish' in self.config:
-            self.addresses[f'@@{label}'].add(self.config['finish'])
+            self.add_address(f'@@{label}', self.config['finish'])
 
         if 'align' in self.config:
-            self.alignments[f'@{label}'] = self.config['align']
+            self.set_alignment(f'@{label}', self.config['align'])
 
         if 'total_length' in self.config:
             total_length = self.config['total_length']
-            self.addresses[f'@@{label}'].add(f'@{label},{total_length}')
+            self.add_address(f'@@{label}', f'@{label},{total_length}')
 
         if self.is_recursive and self.sections is not None:
             for key in self.config:
@@ -156,7 +155,6 @@ class Unpacker:
 
         if not self.parent:
             self.preclean()
-            self.propagate_addresses()
 
     @property
     def is_recursive(self):
@@ -257,20 +255,21 @@ class Unpacker:
         result = None
         if attribute in self.config:
             result = self.config[attribute]
-        elif attribute in self.INHERITABLE_SETTINGS and \
-                self.parent is not None:
+        elif self.parent is not None and \
+                attribute in self.INHERITABLE_SETTINGS:
             result = self.parent.get_setting(attribute, caller=caller)
         if isinstance(result, str) and result.startswith('@'):
-            test = self.get_address(result)
+            label, offset = self.split_address_label(result)
+            test = self.get_address(label)
             if test is not None:
-                result = test
+                result = test + offset
         return result
 
     def set_value(self, attribute, value):
         self._config_values[attribute] = value
 
     def evaluate(self, expression):
-        if isinstance(expression, int):
+        if isinstance(expression, int) or expression is None:
             return expression
         if not expression.startswith('{'):
             raise NotImplementedError
@@ -293,37 +292,75 @@ class Unpacker:
             blob = section.packed.read()
         elif hasattr(section, 'unpacked'):
             blob = section.unpacked
+        else:
+            return
         value = int.from_bytes(blob,
                                byteorder=section.get_setting('byteorder'))
         return value
 
     def split_address_label(self, label):
-        if ',' in label:
+        try:
             label, offset = label.split(',')
             if offset.startswith('0x'):
                 offset = int(offset, 0x10)
             else:
                 offset = int(offset)
-        else:
+        except ValueError:
             offset = 0
         return label, offset
 
-    def get_address(self, label):
-        assert label.startswith('@')
-        label, offset = self.split_address_label(label)
+    def add_address(self, label, address):
+        if address not in self.addresses[label]:
+            assert address is not None
+            self.addresses[label].add(address)
+            if isinstance(address, int):
+                if label in self.alignments:
+                    m, r = self.alignments[label]
+                    assert address % m == r
+                assert len({a for a in self.addresses[label]
+                            if isinstance(a, int)}) == 1
+                self.cache_address(label, address)
+                for other in self.addresses[label]:
+                    if isinstance(other, int):
+                        continue
+                    olabel, ooffset = self.split_address_label(other)
+                    self.add_address(olabel, address-ooffset)
+            else:
+                pool = {label, address} | \
+                        self.addresses[label] | self.addresses[address]
+                numbers = {a for a in pool if isinstance(a, int)}
+                pool -= numbers
+                assert len(numbers) <= 1
+                number = numbers.pop() if numbers else None
+                for l in pool:
+                    self.addresses[l] |= pool
+                    if number is not None:
+                        self.cache_address(l, number)
+                if ',' in address:
+                    alabel, aoffset = self.split_address_label(address)
+                    self.add_address(alabel, f'{label},{-aoffset}')
+            return True
+        return False
+
+    def cache_address(self, label, address):
+        assert isinstance(address, int)
         if label in self.address_cache:
-            return self.address_cache[label] + offset
-        key = label
-        assert not key.startswith('@@@')
-        addresses = {a for a in self.addresses[key] if isinstance(a, int)}
-        if not addresses:
-            return None
-        if len(addresses) == 1:
-            address = addresses.pop() + offset
-            assert label not in self.address_cache
+            assert self.address_cache[label] == address
+        else:
             self.address_cache[label] = address
-            return self.get_address(label)
-        raise Exception(f'{key} address conflict: {addresses}')
+
+    def get_address(self, label):
+        #assert ',' not in label
+        try:
+            return self.address_cache[label]
+        except KeyError:
+            return None
+
+    def set_alignment(self, label, alignment):
+        if isinstance(alignment, tuple):
+            self.alignments[label] = alignment
+        else:
+            self.alignments[label] = alignment, 0
 
     def check_pointer_dimensions(self):
         num_pointers = self.get_setting('num_pointers')
@@ -339,7 +376,7 @@ class Unpacker:
             finish = self.start + (self.evaluate(num_pointers) *
                                    pointer_length)
             if finish not in self.addresses[key]:
-                self.addresses[key].add(finish)
+                self.add_address(key, finish)
 
     def check_list_dimensions(self):
         num_items = self.get_setting('num_items')
@@ -355,115 +392,54 @@ class Unpacker:
             num_items = self.get_setting('num_items')
             item_size = self.get_setting('item_size')
 
+        num_items = self.evaluate(num_items)
+        item_size = self.evaluate(item_size)
         if None not in (num_items, item_size, self.start):
-            total_length = self.evaluate(num_items) * self.evaluate(item_size)
+            total_length = num_items * item_size
             key = self.flabel
             finish = self.start + total_length
             if finish not in self.addresses[key]:
-                self.addresses[key].add(finish)
-
-    def propagate_addresses(self, seed=None):
-        if isinstance(seed, str):
-            seed = {seed}
-        elif seed is None:
-            seed = set(self.addresses.keys())
-        updated = False
-        local_updated = set(seed)
-        done_pairs = set()
-        while local_updated:
-            previous_updated = local_updated
-            local_updated = set()
-            for key1 in sorted(previous_updated):
-                assert not isinstance(key1, int)
-                key1_address = self.get_address(key1)
-                for key2 in list(self.addresses[key1]):
-                    if key1 == key2:
-                        continue
-                    if (key1, key2) in done_pairs:
-                        continue
-                    done_pairs.add((key1, key2))
-                    if isinstance(key2, int):
-                        continue
-                    if key2 == '!eof':
-                        length = self.root.get_packed_length()
-                        if length is None:
-                            continue
-                        key2_address = f'@{self.root.label},{length}'
-                        if key2_address not in self.addresses[key1]:
-                            self.addresses[key1].add(key2_address)
-                            local_updated.add(key1)
-                        continue
-                    key2, offset = self.split_address_label(key2)
-                    if offset:
-                        reverse_key = f'{key1},{-offset}'
-                    else:
-                        reverse_key = key1
-
-                    if reverse_key not in self.addresses[key2]:
-                        self.addresses[key2].add(reverse_key)
-                        local_updated.add(key2)
-
-                    key2_address = self.get_address(key2)
-                    if key2_address is None and key1_address is not None:
-                        key2_address = key1_address - offset
-                        assert key2_address >= 0
-                        if key2_address not in self.addresses[key2]:
-                            self.addresses[key2].add(key2_address)
-                            local_updated.add(key2)
-
-            updated = updated or bool(local_updated)
-
-        self.verify_alignment()
-        return updated
-
-    def verify_alignment(self):
-        updated = True
-        while updated:
-            updated = False
-            for label in sorted(self.alignments):
-                label_align = self.alignments[label]
-                if isinstance(label_align, int):
-                    m, r = label_align, 0
-                else:
-                    m, r = label_align
-                for other in self.addresses[label]:
-                    if isinstance(other, int):
-                        if (other % m) != r:
-                            raise Exception(
-                                    f'FAILED ALIGNMENT {label}: '
-                                    f'{other:x} % {m} != {r}')
-                        continue
-                    other, offset = self.split_address_label(other)
-                    r2 = (r - offset) % m
-                    other_align = m
-                    if r2:
-                        other_align = (m, r2)
-                    if other in self.alignments:
-                        assert self.alignments[other] == other_align
-                    else:
-                        self.alignments[other] = other_align
-                        updated = True
+                self.add_address(key, finish)
 
     def guess_start(self):
         if self.start is not None:
             return
 
+        for label in self.addresses[self.slabel]:
+            label, offset = self.split_address_label(label)
+            address = self.get_address(label)
+            if address is not None:
+                self.add_address(self.slabel, address + offset)
+                return self.guess_start()
+
         if self.parent is None:
-            self.addresses[self.slabel].add(0)
+            self.add_address(self.slabel, 0)
             return
 
-        if self.get_setting('start') is self.get_setting('finish') is None:
-            if self.parent.start is not None and \
-                    len(self.parent.children) >= 1 and \
-                    self.parent.children[0] is self:
-                self.addresses[self.slabel].add(self.parent.start)
+        if self.get_setting('start') is self.get_setting('finish') is None \
+                and self.parent.start is not None \
+                and len(self.parent.children) >= 1 \
+                and self.parent.children[0] is self:
+            self.add_address(self.slabel, self.parent.start)
 
     def guess_finish(self, override=False):
         if self.finish is not None:
             return
 
+        for label in self.addresses[self.flabel]:
+            label, offset = self.split_address_label(label)
+            address = self.get_address(label)
+            if address is not None:
+                self.add_address(self.flabel, address + offset)
+                return self.guess_finish()
+
+        if self.parent is None:
+            self.add_address(self.flabel, '!eof')
+
         if '!eof' in self.addresses[self.flabel]:
-            self.addresses[self.flabel].add('@@_root')
+            length = self.root.get_packed_length()
+            if length is not None:
+                self.add_address(self.flabel, length)
 
         if 'finish' in self.config and not override:
             return
@@ -475,49 +451,30 @@ class Unpacker:
             self.check_pointer_dimensions()
 
         if self.parent is None:
-            self.addresses[self.flabel].add('!eof')
             return
 
         # double check
         if self.finish is not None:
             return
 
-        uncertain_address = False
-        candidates = set()
-        for child in self.parent.children:
-            label = child.slabel
-            if label in self.nulled_addresses:
-                continue
-            address = self.get_address(label)
-            if address is None:
-                uncertain_address = True
-                continue
-            candidates.add(address)
+        self.parent.guess_finish()
+        self.guess_sibling_finish()
 
-        if self.start not in candidates:
-            return
-        candidates = {a for a in candidates if a > self.start}
-
-        address = self.parent.finish
-        if address is not None:
-            assert address >= self.start
-            candidates.add(address)
-
-        if candidates:
-            self.addresses[self.flabel].add(min(candidates))
-
-    def guess_uncle_finish(self):
-        if self.finish is not None:
-            return
-        if self.parent is None:
-            return
-        if self.parent.parent is None:
-            return
-        uncles = self.parent.parent.children
-        parent_index = uncles.index(self.parent)
-        if len(uncles) > parent_index + 1:
-            uncle = uncles[parent_index + 1]
-            self.addresses[self.parent.flabel].add(uncle.slabel)
+    def guess_sibling_finish(self):
+        siblings = self.parent.children
+        self_index = siblings.index(self)
+        if len(siblings) > self_index + 1:
+            if self.start is None:
+                return
+            sibling = siblings[self_index + 1]
+            sibling.guess_finish()
+            sibling.guess_start()
+            self.add_address(self.flabel, sibling.slabel)
+        else:
+            assert self is self.parent.children[-1]
+            address = self.parent.finish
+            if address is not None:
+                self.add_address(self.flabel, address)
 
     def check_null_pointer(self, pointer):
         if isinstance(pointer, int) and self.get_setting('valid_range'):
@@ -544,8 +501,6 @@ class Unpacker:
         pointers = []
         non_null = set()
         maximum = None
-        if self.start is None or self.finish is None:
-            self.propagate_addresses()
         if isinstance(self.start, int) and isinstance(self.finish, int):
             maximum = int((self.finish-self.start) / pointer_length)
         while True:
@@ -590,15 +545,11 @@ class Unpacker:
 
         self.check_pointer_dimensions()
         assert self.finish is not None
-        self.propagate_addresses(self.flabel)
         self._pointer_table_size = self.finish
         return self.get_pointer_table_size()
 
     def preclean(self):
         self.guess_start()
-        self.guess_finish()
-        if self.finish and self.start is None:
-            self.guess_start()
         for c in self.children:
             c.preclean()
 
@@ -610,7 +561,6 @@ class Unpacker:
             if not isinstance(packed, BytesIO):
                 packed = BytesIO(packed)
             self.packed = packed
-            self.propagate_addresses(self.flabel)
             return
 
         assert self.parent is not None
@@ -627,13 +577,12 @@ class Unpacker:
         if finish is None:
             self.guess_finish(override=True)
             finish = self.finish
-        if finish is None:
-            self.propagate_addresses()
-            finish = self.finish
         if None in (self.start, finish):
             import pdb; pdb.set_trace()
         assert None not in (self.start, finish)
         assert finish >= self.start
+        self.parent.guess_start()
+        self.parent.guess_finish()
         assert None not in (self.parent.start, self.parent.finish)
         assert self.parent.start <= self.start <= finish <= self.parent.finish
         self.parent.packed.seek(self.start-self.parent.start)
@@ -678,7 +627,6 @@ class Unpacker:
             assert len(pointer_names) == self.evaluate(num_pointers)
         self.packed.seek(0)
         lowest = None
-        propagate_seed = set()
         for i, pointer_name in enumerate(pointer_names):
             value = self.packed.read(pointer_length)
             value = int.from_bytes(value, byteorder=byteorder)
@@ -687,9 +635,8 @@ class Unpacker:
                     self.nulled_addresses.add(pointer_name)
                     slabel = pointer_name
                     flabel = f'@{slabel}'
-                    self.addresses[slabel].add(flabel)
-                    self.addresses[flabel].add(slabel)
-                    propagate_seed |= {slabel, flabel}
+                    self.add_address(slabel, flabel)
+                    self.add_address(flabel, slabel)
                 pointers.append(None)
                 continue
             pointers.append(value)
@@ -697,8 +644,7 @@ class Unpacker:
             lowest = value if lowest is None else min(lowest, value)
             if isinstance(pointer_name, str) \
                     and pointer_name.startswith('@'):
-                self.addresses[pointer_name].add(value)
-                propagate_seed.add(pointer_name)
+                self.add_address(pointer_name, value)
         pointers = [None if self.check_null_pointer(p) else p
                     for p in pointers]
 
@@ -710,13 +656,9 @@ class Unpacker:
             if section.config['linked_pointers'] != self.label:
                 continue
             if lowest is not None and lowest not in section.starts:
-                self.addresses[section.slabel].add(lowest)
-                propagate_seed.add(section.slabel)
+                self.add_address(section.slabel, lowest)
             elif lowest is None and not pointers:
-                self.addresses[section.slabel].add(section.flabel)
-                propagate_seed.add(section.slabel)
-        propagate_seed = {l for l in propagate_seed if not l.startswith('@@')}
-        self.propagate_addresses(propagate_seed)
+                self.add_address(section.slabel, section.flabel)
 
         return pointers
 
@@ -818,6 +760,8 @@ class Unpacker:
         if 'data_type' not in self.config:
             raise Exception(f'Undefined data type: {self.label}')
 
+        self.guess_start()
+        self.guess_finish()
         if self.config['data_type'] in ('blob', 'ignore'):
             assert unpacked is None
             self.packed.seek(0)
@@ -1059,7 +1003,6 @@ class Unpacker:
         while local_updated:
             local_updated = False
             problems = set()
-            propagate_seed = set()
             for c in self.descendents:
                 packed_size = c.calculate_packed_size()
                 slabel = f'@{c.label}'
@@ -1072,28 +1015,22 @@ class Unpacker:
                 if start is not None:
                     finish = start + packed_size
                     if finish not in self.addresses[flabel]:
-                        self.addresses[flabel].add(finish)
-                        propagate_seed.add(flabel)
+                        self.add_address(flabel, finish)
                         local_updated = True
                 else:
                     problems.add(c)
                 if c.finishes and '!eof' in c.finishes \
                         and eof not in c.finishes:
                     local_updated = True
-                    self.addresses[flabel].add(eof)
-                    propagate_seed.add(flabel)
+                    self.add_address(flabel, eof)
                 finish = c.get_address(flabel)
                 if finish is not None:
                     start = finish - packed_size
                     if start not in self.addresses[slabel]:
-                        self.addresses[slabel].add(start)
-                        propagate_seed.add(slabel)
+                        self.add_address(slabel, start)
                         local_updated = True
 
             if local_updated:
-                propagate_seed = {l for l in propagate_seed
-                                  if l.startswith('@@')}
-                self.propagate_addresses(propagate_seed)
                 continue
 
             problems = {c for c in problems if c.unpacked is not None}
@@ -1128,8 +1065,7 @@ class Unpacker:
                             and candidate <= a < upper}
                     if test:
                         continue
-                    self.addresses[c.slabel].add(candidate)
-                    self.verify_alignment()
+                    self.add_address(c.slabel, candidate)
                     local_updated = True
                     break
 
