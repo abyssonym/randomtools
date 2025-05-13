@@ -1397,6 +1397,20 @@ class Parser:
         bytecode = BytesIO(header)
 
         done_scripts = set()
+        warned = False
+        for s in self.scripts.values():
+            if hasattr(s.pointer, 'repointer'):
+                comment = s.comment
+                if comment is None:
+                    comment = ''
+                else:
+                    comment = f'# {comment}'
+                msg = f'Double dump: @{s.pointer.old_pointer:x}  {comment}'
+                if not warned:
+                    warn(msg.strip())
+                    warned = True
+                delattr(s.pointer, 'repointer')
+
         assert not any(hasattr(s.pointer, 'repointer')
                        for s in self.scripts.values())
         no_joined_before = {s for s in self.scripts.values()
