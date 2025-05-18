@@ -831,6 +831,19 @@ def gen_random_normal(random_degree=None):
         return (value_c * (1-factor)) + (value_a * factor)
 
 
+def gen_random_gravity(items, random_degree=None, gravity=1):
+    if random_degree is None:
+        random_degree = get_random_degree()
+    if random_degree == 0:
+        return items[0]
+
+    value = gen_random_normal(random_degree=random_degree)
+    value = abs(value-0.5) * 2
+    max_index = len(items)-1
+    index = int(round((value ** gravity) * max_index))
+    return items[index]
+
+
 def mutate_normal(base, minimum, maximum, random_degree=None,
                   return_float=False, wide=False):
     assert minimum <= base <= maximum
