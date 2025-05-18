@@ -1557,7 +1557,6 @@ class TableObject(object):
 
     def update_packed_data(self):
         main = self._unpacked
-        self.old_data = {}
         for name, source in self.specs.attributes.items():
             current = main
             sequence = source.split('.')
