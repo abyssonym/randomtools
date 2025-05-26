@@ -684,9 +684,9 @@ class fake_yaml:
         import json
 
         def format_key(key):
-            if key.startswith('0x'):
+            if key.startswith('0x') or key.startswith('-0x'):
                 try:
-                    return int(key[2:], 0x10)
+                    return int(key, 0x10)
                 except ValueError:
                     pass
             try:
