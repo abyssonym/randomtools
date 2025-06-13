@@ -24,6 +24,79 @@ class BytesEncoder(json.JSONEncoder):
             return super().default(o)
 
 
+class BasicPointer:
+    def __init__(self, index, pointer, pointer_length, byteorder):
+        self.index = index
+        if isinstance(pointer, bytes):
+            pointer = int.from_bytes(pointer, byteorder=byteorder)
+        self.pointer = pointer
+        self.pointer_length = pointer_length
+        self.byteorder = byteorder
+
+    def __repr__(self):
+        return f'{self.index:0>3}:@{self.pointer:x}'
+
+    def __hash__(self):
+        return self._sort_key.__hash__()
+
+    def __int__(self):
+        return self.pointer
+
+    def __format__(self, format_spec):
+        return format(self.pointer, format_spec)
+
+    def __add__(self, other):
+        if isinstance(other, int):
+            return self.pointer + other
+        if hasattr(other, 'pointer'):
+            return self.pointer + other.pointer
+        raise TypeError
+
+    def __sub__(self, other):
+        if isinstance(other, int):
+            return self.pointer - other
+        if hasattr(other, 'pointer'):
+            return self.pointer - other.pointer
+        raise TypeError
+
+    def __eq__(self, other):
+        if not isinstance(other, BasicPointer):
+            return False
+        return self._sort_key == other._sort_key
+
+    def __lt__(self, other):
+        return self._sort_key < other._sort_key
+
+    @property
+    def _sort_key(self):
+        return (self.pointer, self.index)
+
+    @property
+    def packed(self):
+        return self.pointer.to_bytes(length=self.pointer_length,
+                                     byteorder=self.byteorder)
+
+
+class MaskStructPointer(BasicPointer):
+    def __init__(self, index, original):
+        self.index = index
+        self.original = original
+        self.pointer_length = len(original.packed)
+        self.byteorder = None
+        for attr in self.original._original_values:
+            assert not hasattr(self, attr)
+            setattr(self, attr, getattr(self.original, attr))
+
+    def update(self):
+        for attr in self.original._original_values:
+            setattr(self.original, attr, getattr(self, attr))
+
+    @property
+    def packed(self):
+        self.update()
+        return self.original.packed
+
+
 class Unpacker:
     class PointerTable:
         def __init__(self, section):
@@ -51,11 +124,29 @@ class Unpacker:
         def pointer_length(self):
             return self.section.get_setting('pointer_length')
 
+        def get_pointer_addresses(self):
+            pointers = []
+            addresses = []
+            for x in self.pointers:
+                if x is None:
+                    pointers.append(None)
+                    addresses.append(None)
+                    continue
+                if isinstance(x, tuple):
+                    p, a = x
+                else:
+                    p = None
+                    a = x
+                pointers.append(p)
+                addresses.append(a)
+            return pointers, addresses
+
         @property
         def bytecode(self):
             bytecode = b''
             byteorder = self.section.get_setting('byteorder')
             relative_to = self.section.get_setting('relative_to')
+            pointer_order = self.section.get_setting('pointer_order')
             offset = 0
             if isinstance(relative_to, str):
                 assert relative_to.startswith('@')
@@ -65,12 +156,14 @@ class Unpacker:
                 return None
             relative_to += offset
 
-            for pointer in self.pointers:
+            pointers, addresses = self.get_pointer_addresses()
+            previous_value = None
+            for pointer, address in zip(pointers, addresses):
                 slabel, label, offset = None, None, None
-                if isinstance(pointer, str):
-                    assert pointer.startswith('@')
-                    assert '@' not in pointer[1:]
-                    slabel, offset = self.section.split_address_label(pointer)
+                if isinstance(address, str):
+                    assert address.startswith('@')
+                    assert '@' not in address[1:]
+                    slabel, offset = self.section.split_address_label(address)
                     assert slabel.startswith('@')
                     assert not slabel.startswith('@@')
                     label = slabel[1:]
@@ -82,11 +175,20 @@ class Unpacker:
                             value = value + offset - relative_to
                         else:
                             return None
-                elif pointer is None:
+                elif address is None:
                     value = 0
                 assert value >= 0
-                bytecode += value.to_bytes(length=self.pointer_length,
-                                           byteorder=byteorder)
+                if hasattr(pointer, 'packed'):
+                    pointer.pointer = value
+                    bytecode += pointer.packed
+                else:
+                    bytecode += value.to_bytes(length=self.pointer_length,
+                                               byteorder=byteorder)
+                if pointer_order == 'sorted' and previous_value is not None \
+                        and 0 < value < previous_value:
+                    raise Exception(f'Pointer out of order: {pointer}')
+                if address is not None:
+                    previous_value = value
             return bytecode
 
     INHERITABLE_SETTINGS = {
@@ -137,7 +239,8 @@ class Unpacker:
 
         if 'total_length' in self.config:
             total_length = self.config['total_length']
-            self.add_address(f'@@{label}', f'@{label},{total_length}')
+            if isinstance(total_length, int):
+                self.add_address(f'@@{label}', f'@{label},{total_length}')
 
         if self.is_recursive and self.sections is not None:
             for key in self.config:
@@ -401,9 +504,32 @@ class Unpacker:
             if finish not in self.addresses[key]:
                 self.add_address(key, finish)
 
+    def guess_total_length(self):
+        if 'total_length' not in self.config:
+            return
+
+        total_length = self.config['total_length']
+        if isinstance(total_length, int):
+            return
+        assert total_length.endswith('?')
+        total_length = int(total_length.rstrip('?'))
+
+        if self.start is self.finish is None:
+            return
+
+        if self.start is not None:
+            self.add_address(self.flabel, f'{self.slabel},{total_length}')
+        if self.finish is not None:
+            if self.finish >= total_length:
+                self.add_address(self.slabel, f'{self.flabel},-{total_length}')
+            else:
+                self.add_address(self.slabel, self.flabel)
+
     def guess_start(self):
         if self.start is not None:
             return
+
+        self.guess_total_length()
 
         for label in self.addresses[self.slabel]:
             label, offset = self.split_address_label(label)
@@ -425,6 +551,8 @@ class Unpacker:
     def guess_finish(self, override=False):
         if self.finish is not None:
             return
+
+        self.guess_total_length()
 
         for label in self.addresses[self.flabel]:
             label, offset = self.split_address_label(label)
@@ -477,6 +605,8 @@ class Unpacker:
                 self.add_address(self.flabel, address)
 
     def check_null_pointer(self, pointer):
+        if hasattr(pointer, 'pointer'):
+            pointer = pointer.pointer
         if isinstance(pointer, int) and self.get_setting('valid_range'):
             lower, upper = self.get_setting('valid_range')
             return not lower <= pointer <= upper
@@ -558,6 +688,8 @@ class Unpacker:
             del(self._packed_length)
 
         if packed is not None:
+            while hasattr(packed, 'packed'):
+                packed = packed.packed
             if not isinstance(packed, BytesIO):
                 packed = BytesIO(packed)
             self.packed = packed
@@ -600,6 +732,7 @@ class Unpacker:
         return self.get_packed_length()
 
     def unpack_pointers(self):
+        subformat = self.get_setting('subformat')
         pointer_names = self.get_setting('pointers')
         byteorder = self.get_setting('byteorder')
         pointer_length = self.get_setting('pointer_length')
@@ -628,9 +761,15 @@ class Unpacker:
         self.packed.seek(0)
         lowest = None
         for i, pointer_name in enumerate(pointer_names):
-            value = self.packed.read(pointer_length)
-            value = int.from_bytes(value, byteorder=byteorder)
-            if self.check_null_pointer(value):
+            pointer = self.packed.read(pointer_length)
+            if subformat is None:
+                pointer = BasicPointer(i, pointer,
+                                       pointer_length=pointer_length,
+                                       byteorder=byteorder)
+            else:
+                pointer = MaskStructPointer(i, self.subunpack(subformat,
+                                                              pointer))
+            if self.check_null_pointer(pointer):
                 if isinstance(pointer_name, str):
                     self.nulled_addresses.add(pointer_name)
                     slabel = pointer_name
@@ -639,8 +778,8 @@ class Unpacker:
                     self.add_address(flabel, slabel)
                 pointers.append(None)
                 continue
-            pointers.append(value)
-            value += relative_to
+            pointers.append(pointer)
+            value = pointer.pointer + relative_to
             lowest = value if lowest is None else min(lowest, value)
             if isinstance(pointer_name, str) \
                     and pointer_name.startswith('@'):
@@ -663,13 +802,16 @@ class Unpacker:
         return pointers
 
     def unpack_pointed_list(self):
-        linked_section = self.tree[self.config['linked_pointers']]
-        linked_pointers = linked_section.unpack()
+        pointsec = self.tree[self.config['linked_pointers']]
+        linked_pointers = pointsec.unpack()
         assert isinstance(linked_pointers, list)
-        relative_to = linked_section.get_setting('relative_to')
+        relative_to = pointsec.get_setting('relative_to')
+
         pointer_offset = relative_to - self.start
-        pointers = [p + pointer_offset for p in linked_pointers
-                    if p is not None]
+        offset_relation = {p: p.pointer for p in linked_pointers
+                           if p is not None}
+        pointers = [p.pointer + pointer_offset
+                    for p in linked_pointers if p is not None]
         pointers = sorted(set(pointers))
         pointers.append(None)
         datas = {}
@@ -681,11 +823,23 @@ class Unpacker:
                 data = self.packed.read(b-a)
             else:
                 data = self.packed.read()
-            offset = a - pointer_offset
-            assert offset not in datas
-            datas[offset] = data
+            assert a not in datas
+            datas[a] = data
 
-        return datas
+        repeat = pointsec.get_setting('repeat')
+        if repeat is None:
+            repeat = False
+        final_datas = {}
+        previous_pointer = None
+        sorted_pointers = sorted(p for p in linked_pointers if p is not None)
+        for p in sorted_pointers:
+            final_datas[p] = datas[p.pointer + pointer_offset]
+            if repeat and previous_pointer is not None and \
+                    previous_pointer.pointer == p.pointer:
+                final_datas[previous_pointer] = b''
+            previous_pointer = p
+
+        return final_datas
 
     def unpack_regular_list(self):
         num_items = self.get_setting('num_items')
@@ -796,7 +950,18 @@ class Unpacker:
             else:
                 import pdb; pdb.set_trace()
 
-        if 'value' in self.config:
+        if self.is_pointers:
+            assert isinstance(unpacked, list)
+            test = [p for p in unpacked if p is not None]
+            if test and not isinstance(test[0], BasicPointer):
+                if isinstance(test[0], MaskStruct):
+                    unpacked = [MaskStructPointer(i, p) if p is not None
+                                else None for (i, p) in enumerate(unpacked)]
+                else:
+                    raise Exception('Invalid pointer data type.')
+
+        if 'value' in self.config and None not in (self.start, self.finish) \
+                and self.finish > self.start:
             if isinstance(unpacked, bytes):
                 value = int.from_bytes(unpacked,
                                        byteorder=self.get_setting('byteorder'))
@@ -825,11 +990,17 @@ class Unpacker:
         SORTED_ORDER = False
         PRESERVE_POINTERS = False
         OPTIMIZE = False
+        SEMIOPTIMIZE = False
 
         pointsec = self.tree[self.config['linked_pointers']]
         pointer_order = pointsec.get_setting('pointer_order')
+        repeat = pointsec.get_setting('repeat')
+        if repeat is None:
+            repeat = False
 
-        if pointer_order == 'sorted':
+        if pointer_order == 'optimize':
+            OPTIMIZE = True
+        elif pointer_order == 'sorted':
             SORTED_ORDER = True
         elif pointer_order == 'preserve':
             PRESERVE_POINTERS = True
@@ -841,43 +1012,51 @@ class Unpacker:
         if keys != set(self.unpacked.keys()):
             print(f'WARNING: Mismatched keys in section {self.label}')
 
-        if OPTIMIZE:
-            assert not (SORTED_ORDER or PRESERVE_POINTERS)
-
-        if SORTED_ORDER:
-            assert not PRESERVE_POINTERS
-            keys = sorted(keys)
-        elif PRESERVE_POINTERS:
-            assert not SORTED_ORDER
-        else:
+        if not (SORTED_ORDER or PRESERVE_POINTERS):
             raise Exception(f'Undefined order: {self.label}')
 
         offsets = {}
 
-        if SORTED_ORDER:
+        if SORTED_ORDER or OPTIMIZE:
+            assert not PRESERVE_POINTERS
+            if OPTIMIZE:
+                keys = sorted(keys, key=lambda k: (-len(self.unpacked[k]), k))
+            elif SORTED_ORDER:
+                keys = sorted(keys)
             alldata = b''
+            previous_offset = None
+            previous_data = None
             for key in keys:
                 data = self.unpacked[key]
+                if SEMIOPTIMIZE and previous_offset is not None:
+                    previous_data = alldata[previous_offset:]
                 if OPTIMIZE and data in alldata:
                     offset = alldata.index(data)
+                elif previous_data and repeat is False and \
+                        data in previous_data:
+                    offset = previous_data.index(data)
+                    offset += previous_offset
+                elif repeat is False and previous_offset is not None and \
+                        alldata[previous_offset:] == data:
+                    offset = previous_offset
                 else:
                     offset = len(alldata)
                     alldata += data
                 offsets[key] = offset
+                previous_offset = offset
 
         if PRESERVE_POINTERS:
             lowest = 0
             if self.unpacked.keys():
                 lowest = min(self.unpacked.keys())
-            keys = {key-lowest: key for key in self.unpacked.keys()}
             with BytesIO(b'') as f:
                 for verify in (False, True):
-                    for key in keys:
-                        f.seek(key)
-                        mydata = self.unpacked[keys[key]]
+                    for key in self.unpacked.keys():
+                        f.seek(key-lowest)
+                        mydata = self.unpacked[key]
                         if not verify:
                             f.write(mydata)
-                            offsets[keys[key]] = key
+                            offsets[key] = key-lowest
                         else:
                             vdata = f.read(len(mydata))
                             if vdata != mydata:
@@ -900,13 +1079,16 @@ class Unpacker:
         if hasattr(self, 'linked_section'):
             assert 'pointers' not in self.config
             pointers = []
+            previous_offset = None
             for key in self.unpacked:
                 if key is None:
                     pointers.append(None)
                     continue
                 else:
                     offset = self.linked_offsets[key]
-                    pointers.append(f'@{self.linked_section.label},{offset}')
+                    pointers.append(
+                            (key, f'@{self.linked_section.label},{offset}'))
+                    previous_offset = offset
             self.table.pointers = pointers
         return self.table
 
@@ -921,7 +1103,7 @@ class Unpacker:
 
         subformat = self.get_setting('subformat')
         backup_unpacked = None
-        if subformat:
+        if subformat and self.get_setting('data_type') != 'pointers':
             unpacked = self.unpacked
             backup_unpacked = copy(unpacked)
             if isinstance(unpacked, dict):

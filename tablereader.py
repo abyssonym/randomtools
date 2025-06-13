@@ -1719,7 +1719,10 @@ class TableObject(object):
         objects = {}
         for o in cls.every:
             o.update_packed_data()
-            p = o.pointer - cls.specs.pointer
+            if o._unpointer in unpacked['main_data']:
+                p = o._unpointer
+            else:
+                p = o.pointer - cls.specs.pointer
             objects[p] = o
 
         relative_to = 0
@@ -1731,10 +1734,15 @@ class TableObject(object):
                     assert p not in objects
                     assert p not in unpacked['main_data']
                     continue
-                if p+relative_to not in objects:
+                if hasattr(p, 'pointer') and p in objects:
+                    unpacked['main_data'][p] = \
+                            objects[p]._unpacked
+                    continue
+                if p.pointer+relative_to not in objects:
                     raise Exception(
                             f'{cls}: Missing unpacker data for pointer {p:x}')
-                unpacked['main_data'][p] = objects[p+relative_to]._unpacked
+                unpacked['main_data'][p] = \
+                        objects[p.pointer+relative_to]._unpacked
         else:
             unpacked['main_data'] = [v._unpacked for v in objects.values()]
 
@@ -2451,6 +2459,7 @@ def get_packed_objects(objtype, filename):
     unpacker.set_packed(data)
     assert not hasattr(objtype, '_unpacked')
     unpacked = unpacker.unpack()
+
     objtype._full_unpacked = unpacked
     relative_to = 0
     if 'main_pointers' in unpacked:
@@ -2477,9 +2486,13 @@ def get_packed_objects(objtype, filename):
         if p is None and data is None:
             continue
         assert isinstance(data, dict)
-        obj = objtype(filename,
-                      pointer=pointer+p+relative_to, index=len(objects),
-                      groupindex=0)
+        if hasattr(p, 'pointer'):
+            obj = objtype(filename, pointer=pointer+p.pointer+relative_to,
+                          index=len(objects), groupindex=0)
+        else:
+            obj = objtype(filename, pointer=pointer+p+relative_to,
+                          index=len(objects), groupindex=0)
+        obj._unpointer = p
         obj._unpacked = dict(data)
         obj.read_data()
         objects.append(obj)
