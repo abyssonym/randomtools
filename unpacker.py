@@ -1012,7 +1012,7 @@ class Unpacker:
         if keys != set(self.unpacked.keys()):
             print(f'WARNING: Mismatched keys in section {self.label}')
 
-        if not (SORTED_ORDER or PRESERVE_POINTERS):
+        if not (SORTED_ORDER or PRESERVE_POINTERS or OPTIMIZE):
             raise Exception(f'Undefined order: {self.label}')
 
         offsets = {}
