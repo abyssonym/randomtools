@@ -2455,7 +2455,8 @@ def get_packed_objects(objtype, filename):
     f = get_open_file(filename)
     f.seek(pointer)
     data = f.read(finish-pointer)
-    unpacker = Unpacker(config)
+    label = f'{objtype.__name__} {pointer:x}'
+    unpacker = Unpacker(config, label=label)
     unpacker.set_packed(data)
     assert not hasattr(objtype, '_unpacked')
     unpacked = unpacker.unpack()
@@ -2466,6 +2467,8 @@ def get_packed_objects(objtype, filename):
         main_data = []
         if 'relative_to' in config['main_pointers']:
             relative_to = config['main_pointers']['relative_to']
+            if isinstance(relative_to, str):
+                relative_to = unpacker.get_address(relative_to)
         for p in unpacked['main_pointers']:
             if p is None:
                 main_data.append((None, None))

@@ -195,7 +195,7 @@ class Unpacker:
         'byteorder', 'pointer_length', 'pointer_order',
         }
 
-    def __init__(self, config, label=None, parent=None):
+    def __init__(self, config, label=None, parent=None, superformat=None):
         if label is None:
             assert parent is None
             label = '_root'
@@ -210,6 +210,8 @@ class Unpacker:
         self.parent = parent
         if self.parent is not None:
             self.parent.children.append(self)
+            assert superformat is None
+        self._superformat = superformat
         self._addresses = None
         self.sections = None
         if self.parent is None:
@@ -298,6 +300,10 @@ class Unpacker:
     @property
     def tree(self):
         return self.root._tree
+
+    @property
+    def superformat(self):
+        return self.root._superformat
 
     @property
     def descendents(self):
@@ -1297,12 +1303,12 @@ class Unpacker:
         return self.packed.read()
 
     def subunpack(self, subformat, packed):
-        subun = Unpacker(subformat)
+        subun = Unpacker(subformat, superformat=self)
         subun.set_packed(packed)
         return subun.unpack()
 
     def subrepack(self, subformat, unpacked):
-        subun = Unpacker(subformat)
+        subun = Unpacker(subformat, superformat=self)
         subun.set_unpacked(unpacked)
         return subun.repack()
 
