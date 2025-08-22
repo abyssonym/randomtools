@@ -15,7 +15,7 @@ from .unpacker import Unpacker
 from .utils import (MODULE_FILEPATH, cached_property, clached_property,
                     classproperty)
 from .utils import fake_yaml as yaml
-from .utils import (ips_patch, map_to_snes, md5hash, random,
+from .utils import (hexify, ips_patch, map_to_snes, md5hash, random,
                     read_lines_nocomment, read_multi, write_multi)
 
 try:
@@ -271,15 +271,6 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
                 pass
         return value
 
-    def hexify(value):
-        s = ''
-        while True:
-            s = ' '.join([s, '{0:0>2x}'.format(value & 0xff)]).strip()
-            value >>= 8
-            if not value:
-                break
-        return s.strip()
-
     if parameters is not None:
         for parameter_name, value in parameters.items():
             value = clean_parameter(value)
@@ -474,20 +465,42 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
                 _, length = word.split(',')
                 length = int(length)
                 next_address += length
-            else:
+            elif word.startswith('.'):
                 next_address += 1
+            else:
+                try:
+                    int(word, 0x10)
+                    next_address += ceil(len(word)/2)
+                except ValueError:
+                    next_address += 1
+
+    def check_is_hex(s):
+        try:
+            int(s, 0x10)
+            return True
+        except ValueError:
+            return False
 
     for aname in sorted(code_addresses):
+        if check_is_hex(aname):
+            raise Exception('Address name "%s" cannot be '
+                            'a hexidecimal number.' % aname)
         if aname.startswith('.'):
             raise Exception('Address "%s" cannot start '
                             'with a period.' % aname)
 
     for lname in sorted(labels):
+        if check_is_hex(lname):
+            raise Exception('Label name "%s" cannot be '
+                            'a hexidecimal number.' % lname)
         if lname.startswith('.'):
             raise Exception('Label "%s" cannot start '
                             'with a period.' % lname)
 
     for defname in sorted(definitions):
+        if check_is_hex(defname):
+            raise Exception('Definition name "%s" cannot be '
+                            'a hexidecimal number.' % defname)
         if defname.startswith('.'):
             raise Exception('Definition "%s" cannot start '
                             'with a period.' % defname)
@@ -561,7 +574,14 @@ def patch_filename_to_bytecode(patchfilename, mapping=None, parameters=None):
                     code = code.replace('%s,%s' % (name, length), replacement)
                     code = code.replace(name, replacement)
 
-            code = bytearray(map(lambda s: int(s, 0x10), code.split()))
+            code = code.split()
+            temp = []
+            for c in code:
+                numbytes = ceil(len(c) / 2)
+                c = int(c, 0x10).to_bytes(length=numbytes,
+                                          byteorder='little')
+                temp.append(c)
+            code = bytearray(b''.join(temp))
             read_into[address, filename] = code
 
     f.close()

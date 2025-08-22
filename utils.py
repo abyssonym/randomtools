@@ -363,7 +363,8 @@ def get_snes_palette_transformer(use_luma=False, always=None, middle=True,
 
 def hexify(s):
     if isinstance(s, int):
-        return f'{s:0>2x}'
+        num_bytes = ceil(len(f'{s:x}')/2)
+        s = s.to_bytes(length=num_bytes, byteorder='little')
     return ' '.join([f'{w:0>2x}' for w in s])
 
 
