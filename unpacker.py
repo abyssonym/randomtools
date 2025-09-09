@@ -204,6 +204,9 @@ class Unpacker:
         assert label is not None
         assert not label.startswith('@')
         self.label = label
+        if isinstance(config, str) and '\n' not in config:
+            with open(config) as f:
+                config = yaml.safe_load(f.read())
         self.config = config
         self._config_values = {}
         self.children = []
@@ -692,6 +695,11 @@ class Unpacker:
     def set_packed(self, packed=None):
         if hasattr(self, '_packed_length'):
             del(self._packed_length)
+
+        if self.parent is None and isinstance(packed, str) and \
+                '\n' not in packed:
+            with open(packed, 'r+b') as f:
+                packed = f.read()
 
         if packed is not None:
             while hasattr(packed, 'packed'):
