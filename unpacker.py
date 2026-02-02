@@ -7,7 +7,7 @@ from sys import argv
 
 from randomtools.utils import MaskStruct
 from randomtools.utils import fake_yaml as yaml
-from randomtools.utils import search_nested_key
+from randomtools.utils import prettify, search_nested_key
 
 
 def hexify(s):
@@ -265,6 +265,11 @@ class Unpacker:
             self.preclean()
 
     @property
+    def pretty(self):
+        unpacked = self.unpack()
+        return prettify(unpacked)
+
+    @property
     def is_recursive(self):
         if 'data_type' in self.config:
             return self.config['data_type'] == 'recursive'
@@ -316,6 +321,13 @@ class Unpacker:
         return descendents
 
     @property
+    def siblings(self):
+        if self.parent is not None:
+            return self.parent.children
+        if self is not self.root:
+            return self.root.children
+
+    @property
     def addresses(self):
         return self.root._addresses
 
@@ -333,11 +345,36 @@ class Unpacker:
 
     @property
     def start(self):
-        return self.get_address(self.slabel)
+        start = self.get_address(self.slabel)
+        if isinstance(start, int):
+            return start
+        finish = self.get_address(self.flabel)
+        total_length = self.get_setting('total_length')
+        if isinstance(finish, int) and isinstance(total_length, int):
+            self.add_address(self.slabel, finish-total_length)
+            return self.start
+        return start
 
     @property
     def finish(self):
-        return self.get_address(self.flabel)
+        finish = self.get_address(self.flabel)
+        if isinstance(finish, int):
+            return finish
+        start = self.get_address(self.slabel)
+        total_length = self.get_setting('total_length')
+        if isinstance(start, int) and isinstance(total_length, int):
+            self.add_address(self.flabel, start+total_length)
+            return self.finish
+        return finish
+
+    @property
+    def total_length(self):
+        total_length = self.get_setting('total_length')
+        if isinstance(total_length, int):
+            return total_length
+        if isinstance(self.start, int) and isinstance(self.finish, int):
+            return self.finish - self.start
+        return None
 
     @property
     def starts(self):
@@ -422,6 +459,10 @@ class Unpacker:
         return label, offset
 
     def add_address(self, label, address):
+        if isinstance(address, int) and label == self.slabel \
+                and 'validate_start' in self.config \
+                and address != self.config['validate_start']:
+            raise Exception(f'Address {label} failed validation: {address:x}')
         if address not in self.addresses[label]:
             assert address is not None
             self.addresses[label].add(address)
@@ -515,7 +556,19 @@ class Unpacker:
 
     def guess_total_length(self):
         if 'total_length' not in self.config:
-            return
+            if self.is_mask_struct:
+                masks = self.config['masks']
+                masks = [masks[attr]['mask'] for attr in masks]
+                longest_mask = 0
+                for mask in masks:
+                    while '  ' in mask:
+                        mask = mask.replace('  ', ' ')
+                    longest_mask = max(longest_mask, len(mask.strip().split()))
+                self.config['total_length'] = longest_mask
+                if self.start and self.finish:
+                    assert longest_mask == self.finish-self.start
+            else:
+                return
 
         total_length = self.config['total_length']
         if isinstance(total_length, int):
@@ -538,9 +591,23 @@ class Unpacker:
         if self.start is not None:
             return
 
+        if self.siblings and 'start' not in self.config \
+                and 'finish' not in self.config:
+            index = self.siblings.index(self)
+            if index > 0:
+                prev = self.siblings[index-1]
+                self.add_address(self.slabel, prev.flabel)
+            else:
+                self.add_address(self.slabel, 0)
+                return
+
         self.guess_total_length()
+        if self.start is not None:
+            return
 
         for label in self.addresses[self.slabel]:
+            if isinstance(label, int):
+                import pdb; pdb.set_trace()
             label, offset = self.split_address_label(label)
             address = self.get_address(label)
             if address is not None:
@@ -598,7 +665,7 @@ class Unpacker:
         self.guess_sibling_finish()
 
     def guess_sibling_finish(self):
-        siblings = self.parent.children
+        siblings = self.siblings
         self_index = siblings.index(self)
         if len(siblings) > self_index + 1:
             if self.start is None:
@@ -659,7 +726,12 @@ class Unpacker:
             pointer = self.parent.packed.read(pointer_length)
             if len(pointer) < pointer_length:
                 break
-            pointer = int.from_bytes(pointer, byteorder)
+            if 'subformat' in self.config:
+                pointer = MaskStructPointer(
+                        0, self.subunpack(self.config['subformat'], pointer))
+                pointer = pointer.pointer
+            else:
+                pointer = int.from_bytes(pointer, byteorder)
 
             if not self.check_null_pointer(pointer):
                 pointer += (relative_to - self.parent.start)
@@ -699,7 +771,12 @@ class Unpacker:
         if self.parent is None and isinstance(packed, str) and \
                 '\n' not in packed:
             with open(packed, 'r+b') as f:
-                packed = f.read()
+                if self.start is not None:
+                    f.seek(self.start)
+                if self.total_length is not None:
+                    packed = f.read(self.total_length)
+                else:
+                    packed = f.read()
 
         if packed is not None:
             while hasattr(packed, 'packed'):
@@ -930,10 +1007,13 @@ class Unpacker:
 
         self.guess_start()
         self.guess_finish()
-        if self.config['data_type'] in ('blob', 'ignore'):
+        if self.config['data_type'] in ('blob', 'int', 'ignore'):
             assert unpacked is None
             self.packed.seek(0)
             data = self.packed.read()
+            if self.config['data_type'] == 'int':
+                data = int.from_bytes(data,
+                                      byteorder=self.get_setting('byteorder'))
             unpacked = data
 
         if self.is_pointers:
@@ -1153,9 +1233,15 @@ class Unpacker:
             packed = self.repack_pointers()
         elif self.is_mask_struct:
             packed = self.repack_mask_struct()
-        elif self.config['data_type'] in ('blob', 'ignore'):
-            assert isinstance(self.unpacked, bytes)
-            packed = self.unpacked
+        elif self.config['data_type'] in ('blob', 'int', 'ignore'):
+            if self.config['data_type'] == 'int':
+                length = self.finish - self.start
+                unpacked = self.unpacked.to_bytes(
+                    length=length, byteorder=self.get_setting('byteorder'))
+            else:
+                unpacked = self.unpacked
+            assert isinstance(unpacked, bytes)
+            packed = unpacked
         else:
             import pdb; pdb.set_trace()
 
