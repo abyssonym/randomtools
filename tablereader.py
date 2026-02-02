@@ -1028,10 +1028,9 @@ class TableSpecs:
                     while '  ' in line:
                         line = line.replace('  ', ' ')
                     if line.count('=') == 1:
-                        line = line.split()
-                        if len(line) != 3 or line[1] != '=':
-                            continue
-                        name, _, source = line
+                        name, source = line.split('=')
+                        name = name.strip()
+                        source = source.strip()
                         self.attributes[name] = source
                     elif line.count(':') == 1:
                         line = line.replace(' ', '')
@@ -1396,7 +1395,10 @@ class TableObject(object):
     @property
     def display_name(self):
         if not hasattr(self, "name"):
-            self.name = "%x" % self.index
+            if hasattr(self, "NAME_LIST"):
+                self.name = getattr(names, self.NAME_LIST)[self.index]
+            else:
+                self.name = "%x" % self.index
         if isinstance(self.name, int):
             return "%x" % self.name
         return "".join([c for c in self.name if c in string.printable])
