@@ -4,6 +4,7 @@ from collections import OrderedDict, defaultdict
 from hashlib import md5
 from math import ceil
 from os import path
+from string import ascii_lowercase, ascii_uppercase, digits
 
 MODULE_FILEPATH, _ = path.split(__file__)
 
@@ -519,6 +520,38 @@ def md5hash(filename, blocksize=65536):
     return m.hexdigest()
 
 
+def prettify(value):
+    if hasattr(value, 'pretty'):
+        return value.pretty
+    if isinstance(value, dict):
+        longest = max(len(str(k)) for k in value.keys()) + 1
+        lines = []
+        for k, v in value.items():
+            k = f'{k}:'
+            v = prettify(v).strip()
+            if '\n' in v:
+                v = v.replace('\n', '\n  ')
+                s = f'{k}\n  {v}'
+            else:
+                s = f'{k:{longest}} {v}'
+            lines.append(s)
+        return '\n'.join(lines)
+    if isinstance(value, list):
+        if not value:
+            return ''
+        delimiter = ', '
+        test = prettify(value[0])
+        if '\n' in test:
+            delimiter = '\n\n'
+        s = delimiter.join(prettify(v).strip() for v in value)
+        while '\n\n\n' in s:
+            s = s.replace('\n\n\n', '\n\n')
+        return s
+    if isinstance(value, bytes):
+        return hexify(value)
+    return str(value)
+
+
 def read_multi(f, length=2, reverse=True):
     vals = list(map(int, f.read(length)))
     if reverse:
@@ -628,6 +661,34 @@ def search_nested_key(nested, key, root=True):
             raise Exception(f'Nested key not found: {key}')
         raise Exception(f'Nested key not unique: {key}')
     return NESTED_FAIL
+
+
+def side_by_side(a, b=None, delimiter=' '):
+    if b is None:
+        if isinstance(a, list) and len(a) >= 2:
+            b = a[-1]
+            a = side_by_side(a[:-1], b=None, delimiter=delimiter)
+        elif isinstance(a, list):
+            assert len(a) == 1
+            return str(a[0])
+        else:
+            assert False
+
+    assert isinstance(a, str)
+    assert isinstance(b, str)
+
+    a = a.split('\n')
+    b = b.split('\n')
+    while len(a) < len(b):
+        a.append('')
+    while len(b) < len(a):
+        b.append('')
+    longest = max(len(aa) for aa in a)
+    c = []
+    for (aa, bb) in zip(a, b):
+        cc = f'{aa:{longest}}{delimiter}{bb}'
+        c.append(cc)
+    return '\n'.join(c)
 
 
 def summarize_state():
@@ -800,6 +861,9 @@ class MaskStruct:
                 self._data_types[attr] = 'int'
 
             bigend_mask = self._masks[attr]
+            if bigend_mask == 0 and not MaskStruct.WARNED:
+                print(f'WARNING: Empty mask: {attr}.')
+                MaskStruct.WARNED = True
             litend_mask = reverse_byte_order(bigend_mask,
                                              length=self._length)
             bigend_is_split = '0' in f'{bigend_mask:b}'.rstrip('0')
@@ -854,6 +918,17 @@ class MaskStruct:
 
     def __repr__(self):
         fieldstrs = []
+        for field, value in self.preprocessed.items():
+            fieldstrs.append(f'{field}={value}')
+        return '<%s>' % ';'.join(fieldstrs).strip()
+
+    @property
+    def pretty(self):
+        return prettify(self.preprocessed)
+
+    @property
+    def preprocessed(self):
+        preprocessed = OrderedDict()
         for field, value in self.unpacked.items():
             if isinstance(value, int):
                 value = f'{value:0>2x}'
@@ -861,8 +936,8 @@ class MaskStruct:
                 value = ','.join([f'{v:0>2x}' for v in value])
             if isinstance(value, bytes):
                 value = hexify(value).replace(' ', '')
-            fieldstrs.append(f'{field}={value}')
-        return '<%s>' % ';'.join(fieldstrs).strip()
+            preprocessed[field] = value
+        return preprocessed
 
     def _unpack(self, data):
         original_data = data
@@ -875,7 +950,7 @@ class MaskStruct:
             if self._byteorders[attr] == 'little':
                 data = litend_data
                 mask = reverse_byte_order(mask, length=self._length)
-            while mask & 1 == 0:
+            while mask and mask & 1 == 0:
                 mask >>= 1
                 data >>= 1
             value = data & mask
@@ -922,7 +997,9 @@ class MaskStruct:
                     assert len(f'{v:b}') <= bit_length
                     temp |= v
                 value = temp
-            if self._collapsible[attr]:
+            if mask == 0:
+                value = 0
+            elif self._collapsible[attr]:
                 value = mask_decompress(value, mask)
             else:
                 while mask & 1 == 0:
@@ -1257,3 +1334,64 @@ class SnesGfxManager:
         for t in tiles:
             data += SnesGfxManager.interleave_tile(t)
         return data
+
+
+class TextDecoder:
+    NULL_CHARACTER = '?'
+    TABLE = {
+        0x20: ' ',
+        0x30: digits,
+        0x41: ascii_uppercase,
+        0x61: ascii_lowercase,
+        }
+
+    @property
+    def FORWARD_TABLE(self):
+        if hasattr(self, '_FORWARD_TABLE'):
+            return self._FORWARD_TABLE
+        self.populate_tables()
+        return self.FORWARD_TABLE
+
+    @property
+    def REVERSE_TABLE(self):
+        if hasattr(self, '_REVERSE_TABLE'):
+            return self._REVERSE_TABLE
+        self.populate_tables()
+        return self.REVERSE_TABLE
+
+    def populate_tables(self):
+        self._FORWARD_TABLE = {}
+        self._REVERSE_TABLE = {}
+        for k, v in self.TABLE.items():
+            for i, c in enumerate(v):
+                index = k + i
+                if index not in self._FORWARD_TABLE:
+                    self._FORWARD_TABLE[index] = c
+                else:
+                    previous = self._FORWARD_TABLE[index]
+                    if not isinstance(previous, set):
+                        previous = {previous}
+                    previous.add(c)
+                    self._FORWARD_TABLE[index] = previous
+                if c not in self._REVERSE_TABLE:
+                    self._REVERSE_TABLE[c] = index
+                else:
+                    previous = self._REVERSE_TABLE[c]
+                    if not isinstance(previous, set):
+                        previous = {previous}
+                    previous.add(index)
+                    self._REVERSE_TABLE[c] = previous
+
+    def decode(self, data):
+        phrase = [self.NULL_CHARACTER if c not in self.FORWARD_TABLE
+                  else self.FORWARD_TABLE[c] for c in data]
+        return ''.join(phrase)
+
+    def encode(self, phrase):
+        if self.NULL_CHARACTER in self.REVERSE_TABLE:
+            null_value = self.REVERSE_TABLE[self.NULL_CHARACTER]
+        else:
+            null_value = 0
+        data = [null_value if c not in self.REVERSE_TABLE
+                else self.REVERSE_TABLE[c] for c in phrase]
+        return bytes(data)
