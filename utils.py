@@ -1337,13 +1337,17 @@ class SnesGfxManager:
 
 
 class TextDecoder:
+    CODEPOINT_LENGTH = 1
     NULL_CHARACTER = '?'
+    UNKNOWN_FORMAT = '<{0:0>%sx}>' % (CODEPOINT_LENGTH * 2)
     TABLE = {
         0x20: ' ',
         0x30: digits,
         0x41: ascii_uppercase,
         0x61: ascii_lowercase,
         }
+    ALTS = {}
+    WORDS = {}
 
     @property
     def FORWARD_TABLE(self):
@@ -1358,6 +1362,28 @@ class TextDecoder:
             return self._REVERSE_TABLE
         self.populate_tables()
         return self.REVERSE_TABLE
+
+    @property
+    def FORWARD_WORDS(self):
+        if hasattr(self, '_FORWARD_WORDS'):
+            return self._FORWARD_WORDS
+        self.populate_tables()
+        return self.FORWARD_WORDS
+
+    @property
+    def REVERSE_WORDS(self):
+        if hasattr(self, '_REVERSE_WORDS'):
+            return self._REVERSE_WORDS
+        self.populate_tables()
+        return self.REVERSE_WORDS
+
+    @cached_property
+    def WORD_ORDER(self):
+        return sorted(self.REVERSE_WORDS.keys(), key=lambda w: (-len(w), w))
+
+    @cached_property
+    def FORWARD_WORD_ORDER(self):
+        return sorted(self.FORWARD_WORDS, key=lambda k: (-k[0], k))
 
     def populate_tables(self):
         self._FORWARD_TABLE = {}
@@ -1382,16 +1408,88 @@ class TextDecoder:
                     previous.add(index)
                     self._REVERSE_TABLE[c] = previous
 
+        for k, v in self.ALTS.items():
+            assert len(k) == len(v)
+            for k1, v1 in zip(k, v):
+                print(k1, v1)
+                assert v1 in self._REVERSE_TABLE
+                assert k1 not in self._REVERSE_TABLE
+                self._REVERSE_TABLE[k1] = self._REVERSE_TABLE[v1]
+
+        self._FORWARD_WORDS = {}
+        for k, v in self.WORDS.items():
+            if isinstance(k, tuple):
+                length, code = k
+            else:
+                code = k
+                length = self.CODEPOINT_LENGTH
+                counter = 0
+                while k > 0:
+                    counter += 1
+                    k >>= 8
+                length = max(counter, length)
+            self._FORWARD_WORDS[(length, code)] = v
+        self._REVERSE_WORDS = {}
+        for k, v in self._FORWARD_WORDS.items():
+            assert v not in self._REVERSE_WORDS
+            self._REVERSE_WORDS[v] = k
+
     def decode(self, data):
-        phrase = [self.NULL_CHARACTER if c not in self.FORWARD_TABLE
-                  else self.FORWARD_TABLE[c] for c in data]
+        phrase = []
+        while data:
+            w = b''
+            prefix = None
+            wordflag = False
+            for k in self.FORWARD_WORD_ORDER:
+                v = self.FORWARD_WORDS[k]
+                length, code = k
+                if len(w) != length:
+                    w = data[:length]
+                    prefix = int.from_bytes(w, byteorder='big')
+                if prefix == code:
+                    data = data[length:]
+                    phrase.append(self.FORWARD_WORDS[k])
+                    wordflag = True
+                    break
+
+            if wordflag:
+                continue
+
+            c, data = (data[:self.CODEPOINT_LENGTH],
+                       data[self.CODEPOINT_LENGTH:])
+            c = int.from_bytes(c, byteorder='big')
+            if c in self.FORWARD_TABLE:
+                phrase.append(self.FORWARD_TABLE[c])
+            elif self.NULL_CHARACTER is None:
+                phrase.append(self.UNKNOWN_FORMAT.format(c))
+            else:
+                phrase.append(self.NULL_CHARACTER)
+
         return ''.join(phrase)
 
     def encode(self, phrase):
         if self.NULL_CHARACTER in self.REVERSE_TABLE:
-            null_value = self.REVERSE_TABLE[self.NULL_CHARACTER]
+            null_value = (self.CODEPOINT_LENGTH,
+                          self.REVERSE_TABLE[self.NULL_CHARACTER])
         else:
-            null_value = 0
+            null_value = (self.CODEPOINT_LENGTH, 0)
         data = [null_value if c not in self.REVERSE_TABLE
                 else self.REVERSE_TABLE[c] for c in phrase]
-        return bytes(data)
+        data = []
+        while phrase:
+            for word in self.WORD_ORDER:
+                if phrase.startswith(word):
+                    data.append(self.REVERSE_WORDS[word])
+                    phrase = phrase[len(word):]
+                    break
+            else:
+                c, phrase = phrase[0], phrase[1:]
+                if c in self.REVERSE_TABLE:
+                    data.append((self.CODEPOINT_LENGTH,
+                                 self.REVERSE_TABLE[c]))
+                else:
+                    data.append(null_value)
+        result = b''
+        for length, value in data:
+            result += value.to_bytes(length=length, byteorder='big')
+        return result
