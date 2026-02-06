@@ -709,9 +709,23 @@ class Unpacker:
         maximum = None
         if isinstance(self.start, int) and isinstance(self.finish, int):
             maximum = int((self.finish-self.start) / pointer_length)
+            assert maximum * pointer_length == (self.finish-self.start)
         while True:
-            if maximum is not None and len(pointers) >= maximum:
-                assert len(pointers) == maximum
+            guess_maximum = None
+            if non_null:
+                lowest = relative_to + min(non_null)
+                highest = relative_to + max(non_null)
+                assert not (lowest <= self.start <= highest)
+                if self.start < lowest and \
+                        (lowest - self.start) % pointer_length == 0:
+                    guess_maximum = (lowest - self.start) // pointer_length
+
+            if None not in (maximum, guess_maximum):
+                assert maximum <= guess_maximum
+
+            guess_maximum = maximum or guess_maximum
+            if guess_maximum is not None and len(pointers) >= guess_maximum:
+                assert len(pointers) == guess_maximum
                 break
 
             if non_null and (self.start <= relative_to or relative_to < 0):
