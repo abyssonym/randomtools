@@ -436,11 +436,28 @@ class Script:
         if start_addresses:
             address_length = max(len(addr) for addr in start_addresses)
 
+        def resolve_inline_text(mytext):
+            if mytext is not None:
+                temp = \
+                        f'|{self.parser.format_inline_text(mytext)}|'
+                temp = temp.replace('\n', '|\n|')
+                lines.append(temp)
+                mytext = None
+            return mytext
+
+        inline_text = None
         for instruction in self.instructions:
+            if instruction.manifest['is_inline_text']:
+                if inline_text is None:
+                    inline_text = b''
+                inline_text += instruction.bytecode
+                continue
+            inline_text = resolve_inline_text(inline_text)
             line = '{0:0>%sx}. {1}' % address_length
             lines.append(line.format(
                 instruction.start_address,
                 self.parser.format_instruction(instruction)))
+        inline_text = resolve_inline_text(inline_text)
         if self.joined_after:
             after = self.joined_after
             line = f'{after.pointer.pointer:x}. {after.pointer}'
@@ -625,7 +642,7 @@ class Parser:
         self.script_pointers = set()
         self.original_pointers = set()
         for p in pointers:
-            p2 = self.add_pointer(p, script=True)
+            p2 = self.add_pointer(int(p), script=True)
             self.original_pointers.add(p2)
         self.get_text_decode_table()
         self.reserved_contexts = {}
@@ -638,9 +655,15 @@ class Parser:
             self.valid_opcode_cache = self.VALID_OPCODE_CACHE
         self.read_scripts()
 
+    @property
+    def pretty(self):
+        return '\n\n'.join([str(self.scripts[p])
+                            for p in sorted(self.scripts)])
+
     def clean_config(self):
         defaults = {
             'prettify': {},
+            'inline_text': False,
             }
         for key in defaults:
             if key not in self.config:
@@ -698,6 +721,9 @@ class Parser:
 
                 if 'length' not in inconf:
                     inconf['length'] = opcode_size
+
+                if 'is_inline_text' not in inconf:
+                    inconf['is_inline_text'] = False
 
                 length = inconf['length']
                 if isinstance(length, str):
@@ -1071,6 +1097,9 @@ class Parser:
                        for line in lines[1:]]
         return '\n'.join([first_line] + other_lines)
 
+    def format_inline_text(self, bytecode):
+        return hexify(bytecode)
+
     def update_format_length(self, instruction=None):
         lengths = []
         if instruction is not None:
@@ -1228,6 +1257,11 @@ class Parser:
         text = text[1:-1]
         return instruction.update_text(text, parameter_name=parameter_name)
 
+    def inline_text_to_instructions(self, text, script):
+        text = self.encode(text)
+        parser = self.__class__(self.config, text, [0])
+        script.instructions += parser.scripts[0].instructions
+
     def script_text_to_lines(self, script_text):
         lines = []
         for line in script_text.split('\n'):
@@ -1240,8 +1274,11 @@ class Parser:
                     previous = lines[-1]
                     if line.startswith('|') and previous.endswith('|'):
                         assert line.endswith('|')
-                        new = f'{previous}{line}'.replace('||', '\n')
-                        lines[-1] = new
+                        new = f'{previous}{line}'
+                        assert new.startswith('|') and new.endswith('|')
+                        middle = new[1:-1]
+                        middle = middle.replace('||', '\n')
+                        lines[-1] = f'|{middle}|'
                     else:
                         lines.append(line)
                     continue
@@ -1303,8 +1340,12 @@ class Parser:
                 dialogue_text.append(line[1:-1])
                 continue
             if dialogue_text:
-                prev_instruction = current_script.instructions[-1]
-                prev_instruction.update_text('\n'.join(dialogue_text))
+                if self.config['inline_text']:
+                    self.inline_text_to_instructions('\n'.join(dialogue_text),
+                                                     current_script)
+                else:
+                    prev_instruction = current_script.instructions[-1]
+                    prev_instruction.update_text('\n'.join(dialogue_text))
                 dialogue_text = []
             if result:
                 current_script = self.get_or_create_script(result.pointer)
