@@ -29,6 +29,10 @@ def mask_shift_left(value, mask):
     return value << count
 
 
+def fstr(template, parameters):
+    return eval(f"f'''{template}'''", parameters)
+
+
 assert mask_decompress(0x2b4, 0xeff) == 0x4b4
 
 
@@ -360,7 +364,8 @@ class Instruction:
             parameters[f'_pretty_{parameter_name}'] = prettified
         if 'comment' not in self.manifest:
             return f'Unknown {self.opcode:0>2x}'
-        return self.manifest['comment'].format(**parameters)
+        #return self.manifest['comment'].format(**parameters)
+        return fstr(self.manifest['comment'], parameters)
 
     @property
     def parser(self):
@@ -431,10 +436,16 @@ class Script:
 
         lines = [header]
 
-        start_addresses = [f'{i.start_address:x}' for i in self.instructions]
         address_length = 0
-        if start_addresses:
-            address_length = max(len(addr) for addr in start_addresses)
+        if not hasattr(self.parser, 'format_length'):
+            self.parser.update_format_length()
+        if hasattr(self.parser, 'address_length'):
+            address_length = self.parser.address_length
+        else:
+            start_addresses = [f'{i.start_address:x}'
+                               for i in self.instructions]
+            if start_addresses:
+                address_length = max(len(addr) for addr in start_addresses)
 
         def resolve_inline_text(mytext):
             if mytext is not None:
