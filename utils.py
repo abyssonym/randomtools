@@ -1388,9 +1388,16 @@ class TextDecoder:
     def populate_tables(self):
         self._FORWARD_TABLE = {}
         self._REVERSE_TABLE = {}
+        self._FORWARD_WORDS = {}
+        self._REVERSE_WORDS = {}
+        my_words = dict(self.WORDS)
+        max_codepoint = (1 << (8*self.CODEPOINT_LENGTH)) - 1
         for k, v in self.TABLE.items():
             for i, c in enumerate(v):
                 index = k + i
+                if index > max_codepoint and index not in my_words:
+                    my_words[index] = c
+                    continue
                 if index not in self._FORWARD_TABLE:
                     self._FORWARD_TABLE[index] = c
                 else:
@@ -1408,16 +1415,7 @@ class TextDecoder:
                     previous.add(index)
                     self._REVERSE_TABLE[c] = previous
 
-        for k, v in self.ALTS.items():
-            assert len(k) == len(v)
-            for k1, v1 in zip(k, v):
-                print(k1, v1)
-                assert v1 in self._REVERSE_TABLE
-                assert k1 not in self._REVERSE_TABLE
-                self._REVERSE_TABLE[k1] = self._REVERSE_TABLE[v1]
-
-        self._FORWARD_WORDS = {}
-        for k, v in self.WORDS.items():
+        for k, v in my_words.items():
             if isinstance(k, tuple):
                 length, code = k
             else:
@@ -1429,10 +1427,37 @@ class TextDecoder:
                     k >>= 8
                 length = max(counter, length)
             self._FORWARD_WORDS[(length, code)] = v
-        self._REVERSE_WORDS = {}
+
+        reverse_my_words = {v: k for (k, v) in my_words.items()}
+
         for k, v in self._FORWARD_WORDS.items():
             assert v not in self._REVERSE_WORDS
             self._REVERSE_WORDS[v] = k
+
+        for k, v in self.ALTS.items():
+            if isinstance(v, int) or isinstance(v, tuple):
+                k = [k]
+                v = [v]
+            assert len(k) == len(v)
+            for k1, v1 in zip(k, v):
+                if v1 in self._FORWARD_TABLE:
+                    v1 = self._FORWARD_TABLE[v1]
+                elif v1 in self._FORWARD_WORDS:
+                    v1 = self._FORWARD_WORDS[v1]
+                if isinstance(v1, int):
+                    self._REVERSE_TABLE[k1] = v1
+                elif isinstance(v1, tuple):
+                    self._REVERSE_WORDS[k1] = v1
+                elif v1 in self._REVERSE_TABLE:
+                    assert k1 not in self._REVERSE_TABLE
+                    self._REVERSE_TABLE[k1] = self._REVERSE_TABLE[v1]
+                else:
+                    assert v1 in reverse_my_words
+                    assert k1 not in reverse_my_words
+                    assert v1 not in self._FORWARD_WORDS
+                    assert v1 in self._REVERSE_WORDS
+                    assert k1 not in self._REVERSE_WORDS
+                    self._REVERSE_WORDS[k1] = self._REVERSE_WORDS[v1]
 
     def decode(self, data):
         phrase = []
