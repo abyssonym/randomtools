@@ -1,6 +1,7 @@
 import random
 import struct
 from collections import OrderedDict, defaultdict
+from copy import copy, deepcopy
 from hashlib import md5
 from math import ceil
 from os import path
@@ -767,6 +768,35 @@ class fake_yaml:
         return fake_yaml.load(text, testing=testing)
 
 
+class CopyMixin:
+    COPY_ATTRIBUTES = None
+    DEEPCOPY_ATTRIBUTES = None
+    _SUPER_COPY_ATTRIBUTES = None
+
+    def __copy__(self):
+        if self._SUPER_COPY_ATTRIBUTES is None:
+            attrs = set()
+            if self.COPY_ATTRIBUTES is not None:
+                attrs |= set(self.COPY_ATTRIBUTES)
+            if self.DEEPCOPY_ATTRIBUTES is not None:
+                attrs |= set(self.DEEPCOPY_ATTRIBUTES)
+            self.__class__._SUPER_COPY_ATTRIBUTES = sorted(attrs)
+        other = self.__new__(self.__class__)
+        for attr in self._SUPER_COPY_ATTRIBUTES:
+            setattr(other, attr, getattr(self, attr))
+        return other
+
+    def __deepcopy__(self, memo):
+        assert id(self) not in memo
+        memo[id(self)] = self
+        other = self.__copy__()
+        if self.DEEPCOPY_ATTRIBUTES is None:
+            return other
+        for attr in self.DEEPCOPY_ATTRIBUTES:
+            setattr(other, attr, deepcopy(getattr(self, attr)))
+        return other
+
+
 class MaskStruct:
     WARNED = False
 
@@ -948,12 +978,14 @@ class MaskStruct:
         return packed
 
 
-class NamedStruct:
+class NamedStruct(CopyMixin):
     FIELD_NAMES = None
     FORMAT_STRING = None
     VERIFIED = False
 
     def __init__(self, *args, **kwargs):
+        if self.COPY_ATTRIBUTES is None:
+            self.__class__.COPY_ATTRIBUTES = sorted(self.FIELD_NAMES)
         self._original_values = None
         if not self.VERIFIED:
             self.verify()
@@ -1051,6 +1083,119 @@ class NamedStruct:
 
     def restore(self):
         self.set_values(self._original_values)
+
+
+class RangeSet(CopyMixin):
+    DEEPCOPY_ATTRIBUTES = ['ranges']
+
+    def __init__(self, initial_ranges=None, finish=None):
+        self.ranges = []
+        if initial_ranges is not None:
+            if finish is not None:
+                assert isinstance(initial_ranges, int)
+                self.add(initial_ranges, finish)
+            elif isinstance(initial_ranges, RangeSet):
+                self.add(initial_ranges)
+            elif isinstance(initial_ranges, tuple) and \
+                    isinstance(initial_ranges[0], int):
+                self.add(initial_ranges)
+            else:
+                for item in initial_ranges:
+                    self.add(item)
+
+    def __repr__(self):
+        ranges = [f'{a:x}~{b:x}' for (a, b) in self.ranges]
+        return ','.join(ranges)
+
+    def __bool__(self):
+        return bool(self.ranges)
+
+    @property
+    def is_contiguous(self):
+        return len(self.ranges) <= 1
+
+    @property
+    def sum(self):
+        length = 0
+        for (a, b) in self.ranges:
+            assert a < b
+            length += (b-a)
+        return length
+
+    def add(self, start, finish=None):
+        if isinstance(start, RangeSet):
+            assert finish is None
+            for item in start.ranges:
+                self.add(item)
+            return self.ranges
+
+        if finish is None:
+            start, finish = start
+        for (a, b) in list(self.ranges):
+            assert a < b
+            if b < start:
+                continue
+            if a > finish:
+                continue
+            start = min(start, a)
+            finish = max(finish, b)
+            self.ranges.remove((a, b))
+        self.ranges.append((start, finish))
+        self.ranges = sorted(self.ranges)
+        return self.ranges
+
+    def remove(self, start, finish=None):
+        if isinstance(start, RangeSet):
+            assert finish is None
+            for item in start.ranges:
+                self.remove(item)
+            return self.ranges
+
+        if finish is None:
+            start, finish = start
+        for (a, b) in list(self.ranges):
+            assert a < b
+            if b <= start:
+                continue
+            if a >= finish:
+                continue
+            self.ranges.remove((a, b))
+            if a < start:
+                self.ranges.append((a, start))
+            if b > finish:
+                self.ranges.append((finish, b))
+        self.ranges = sorted(self.ranges)
+        return self.ranges
+
+    def acquire(self, size, remove=True):
+        best_choice = None
+        best_difference = None
+        for (a, b) in self.ranges:
+            assert a < b
+            if b-a < size:
+                continue
+            score = (b-a) - size
+            if best_difference is None or best_difference > score:
+                best_choice = (a, b)
+                best_difference = score
+        if best_choice is None:
+            return None
+        a, b = best_choice
+        if remove:
+            self.remove(a, a+size)
+        return a
+
+    def overlaps(self, other):
+        for (x1, y1) in self.ranges:
+            assert x1 <= y1
+            for (x2, y2) in other.ranges:
+                assert x2 <= y2
+                if y1 <= x2:
+                    continue
+                if y2 <= x1:
+                    continue
+                return True
+        return False
 
 
 class SnesGfxManager:
