@@ -1,11 +1,10 @@
 from math import ceil
-from os import makedirs, path, stat, environ
+from os import environ, makedirs, path, stat
 from string import printable
 from sys import argv
-from .utils import cached_property
-from .cdrom_ecc import get_edc_ecc, cache_edc_ecc
-from .cdrom_ecc import get_edc_ecc_cache_key
 
+from .cdrom_ecc import cache_edc_ecc, get_edc_ecc, get_edc_ecc_cache_key
+from .utils import RangeSet, cached_property
 
 SYNC_PATTERN = bytes([0] + ([0xFF]*10) + [0])
 fun = lambda x: int(x, 0x10)
@@ -168,6 +167,9 @@ class FileManager(object):
         self.files = read_directory(
             imgname, dirname, minute=minute, second=second, sector=sector)
         self.moved_files = {}
+        self.old_sectors = RangeSet()
+        for f in self.flat_files:
+            self.old_sectors.add(f.old_sectors)
 
     @property
     def flat_files(self):
@@ -211,7 +213,8 @@ class FileManager(object):
             filepath = str(f)[len(self.dirname):]
             if filepath.endswith(';1'):
                 filepath = filepath[:-2]
-            s += '{0:0>8x} {1:0>4x} {2:0>7x} {3}\n'.format(f.target_sector * 0x930, f.pointer, f.size, filepath)
+            s += '{0:0>8x} {1:0>4x} {2:0>7x} {3}\n'.format(
+                    f.target_sector * 0x930, f.pointer, f.size, filepath)
         return s.strip()
 
     def write_all(self):
@@ -249,6 +252,7 @@ class FileManager(object):
         if f is None:
             return None
         f.write_data(filepath)
+        f.exported = True
         return filepath
 
     def calculate_free(self):
@@ -377,10 +381,6 @@ class FileManager(object):
             verify = True
             force_recalc = True
 
-        if new_target_sector != old_file.target_sector:
-            self.moved_files[name] = (old_file.target_sector,
-                                      new_target_sector)
-
         assert new_target_sector is not None
 
         if verify:
@@ -397,6 +397,27 @@ class FileManager(object):
                         assert end_sector <= f.start_sector
                 except AssertionError:
                     raise Exception("Conflict with %s" % f)
+        else:
+            check_overlap = False
+            if new_target_sector != old_file.target_sector:
+                check_overlap = True
+                self.moved_files[name] = (old_file.target_sector,
+                                          new_target_sector)
+
+            if new_size > old_file.num_sectors:
+                check_overlap = True
+
+            if check_overlap:
+                new_sectors = RangeSet(new_target_sector,
+                                       new_target_sector + new_size)
+                new_sectors.remove(old_file.old_sectors)
+                for f in self.flat_files:
+                    if f.exported:
+                        continue
+                    if new_sectors.overlaps(f.old_sectors):
+                        import pdb; pdb.set_trace()
+                        print(f'WARNING: {f.path} not exported before '
+                              f'being overwritten.')
 
         to_import.target_sector = new_target_sector
         to_import.filesize = new_size * 0x800
@@ -449,6 +470,8 @@ class FileEntry:
         self.pointer = pointer
         self.dirname = dirname
         self.initial_sector = initial_sector
+        self.old_sectors = None
+        self.exported = False
 
     def __repr__(self):
         return self.path
@@ -469,10 +492,7 @@ class FileEntry:
 
     @property
     def num_sectors(self):
-        num_sectors = self.filesize // 0x800
-        if self.filesize > num_sectors * 0x800:
-            num_sectors += 1
-        return max(num_sectors, 1)
+        return max(1, ceil(self.filesize / 0x800))
 
     @property
     def hidden(self):
@@ -499,6 +519,7 @@ class FileEntry:
         tempname = path.join(SANDBOX_PATH, tempname)
         f = file_from_sectors(imgname, initial_sector, tempname)
         FileEntry._file_cache[key] = f
+        f.exported = True
 
         return FileEntry.get_cached_file_from_sectors(imgname, initial_sector)
 
@@ -607,6 +628,11 @@ class FileEntry:
 
         self.validate()
         assert f.tell() == self.pointer + self.size
+
+        start_sector = self.old_data['target_sector']
+        num_sectors = max(1, ceil(self.old_data['filesize'] / 0x800))
+        self.old_sectors = RangeSet(
+                start_sector, start_sector + num_sectors)
 
     def write_data(self, filepath=None):
         if self.is_directory or not self.printable_name or not self.filesize:

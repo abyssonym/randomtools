@@ -412,6 +412,9 @@ class Unpacker:
             test = self.get_address(label)
             if test is not None:
                 result = test + offset
+        if result is None and self.superformat is not None \
+                and attribute != 'subformat':
+            result = self.superformat.get_setting(attribute, caller)
         return result
 
     def set_value(self, attribute, value):
@@ -422,8 +425,9 @@ class Unpacker:
             return expression
         if not expression.startswith('{'):
             raise NotImplementedError
-        assert expression.endswith('}')
-        expression = expression[1:-1]
+        assert '}' in expression
+        full_expression = expression
+        expression = expression[1:expression.index('}')]
         if '.' in expression:
             label, setting = expression.split('.')
         else:
@@ -433,18 +437,27 @@ class Unpacker:
         section = self.tree[label]
         if setting is not None:
             value = section.get_setting(setting)
-            return value
-
-        assert section.config['data_type'] == 'blob'
-        if hasattr(section, 'packed'):
-            section.packed.seek(0)
-            blob = section.packed.read()
-        elif hasattr(section, 'unpacked'):
-            blob = section.unpacked
+            if value is None and setting == 'total_length':
+                value = section.guess_total_length()
         else:
-            return
-        value = int.from_bytes(blob,
-                               byteorder=section.get_setting('byteorder'))
+            assert section.config['data_type'] == 'blob'
+            if hasattr(section, 'packed'):
+                section.packed.seek(0)
+                blob = section.packed.read()
+            elif hasattr(section, 'unpacked'):
+                blob = section.unpacked
+            else:
+                return
+            value = int.from_bytes(blob,
+                                   byteorder=section.get_setting('byteorder'))
+        _, suffix = full_expression.strip().split('}')
+        if suffix:
+            if set(suffix) <= set('()+-*/0123456789'):
+                statement = f'{value}{suffix}'
+                value = eval(statement)
+            else:
+                raise Exception(f'Invalid eval statement: {full_expression}')
+
         return value
 
     def split_address_label(self, label):
@@ -469,7 +482,9 @@ class Unpacker:
             if isinstance(address, int):
                 if label in self.alignments:
                     m, r = self.alignments[label]
-                    assert address % m == r
+                    if (address % m) != r:
+                        raise Exception(f'Unaligned data: '
+                                        f'{label} {address:x}')
                 assert len({a for a in self.addresses[label]
                             if isinstance(a, int)}) == 1
                 self.cache_address(label, address)
@@ -556,6 +571,10 @@ class Unpacker:
 
     def guess_total_length(self):
         if 'total_length' not in self.config:
+            if None not in (self.start, self.finish):
+                return self.finish-self.start
+            return
+
             if self.is_mask_struct:
                 masks = self.config['masks']
                 masks = [masks[attr]['mask'] for attr in masks]
@@ -572,12 +591,13 @@ class Unpacker:
 
         total_length = self.config['total_length']
         if isinstance(total_length, int):
-            return
+            return total_length
+
         assert total_length.endswith('?')
         total_length = int(total_length.rstrip('?'))
 
         if self.start is self.finish is None:
-            return
+            return total_length
 
         if self.start is not None:
             self.add_address(self.flabel, f'{self.slabel},{total_length}')
@@ -586,6 +606,7 @@ class Unpacker:
                 self.add_address(self.slabel, f'{self.flabel},-{total_length}')
             else:
                 self.add_address(self.slabel, self.flabel)
+        return total_length
 
     def guess_start(self):
         if self.start is not None:
@@ -1248,14 +1269,23 @@ class Unpacker:
         elif self.is_mask_struct:
             packed = self.repack_mask_struct()
         elif self.config['data_type'] in ('blob', 'int', 'ignore'):
+            packed = None
+            value = None
             if self.config['data_type'] == 'int':
+                value = self.unpacked
+                assert isinstance(value, int)
                 length = self.finish - self.start
-                unpacked = self.unpacked.to_bytes(
+                packed = self.unpacked.to_bytes(
                     length=length, byteorder=self.get_setting('byteorder'))
-            else:
-                unpacked = self.unpacked
-            assert isinstance(unpacked, bytes)
-            packed = unpacked
+            elif self.config['data_type'] == 'blob':
+                packed = self.unpacked
+                value = int.from_bytes(self.unpacked,
+                                       byteorder=self.get_setting('byteorder'))
+            if 'value' in self.config:
+                validate = self.config['value']
+                if isinstance(validate, int):
+                    assert validate == value
+            assert isinstance(packed, bytes)
         else:
             import pdb; pdb.set_trace()
 

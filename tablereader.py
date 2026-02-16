@@ -4,6 +4,7 @@ from collections import Counter
 from copy import copy
 from functools import total_ordering
 from hashlib import md5
+from io import SEEK_END
 from math import ceil
 from os import path
 from sys import stdout
@@ -12,8 +13,8 @@ from _io import BufferedRandom, BytesIO
 
 from .psx_file_extractor import SANDBOX_PATH, FileManager
 from .unpacker import Unpacker
-from .utils import (MODULE_FILEPATH, cached_property, clached_property,
-                    classproperty)
+from .utils import (MODULE_FILEPATH, RangeSet, cached_property,
+                    clached_property, classproperty)
 from .utils import fake_yaml as yaml
 from .utils import (hexify, ips_patch, map_to_snes, md5hash, random,
                     read_lines_nocomment, read_multi, write_multi)
@@ -115,6 +116,18 @@ def get_psx_file_manager():
 def reimport_psx_file(filepath, new_target_sector=None, verify=None):
     if filepath.startswith(SANDBOX_PATH):
         name = filepath[len(SANDBOX_PATH):].lstrip(path.sep)
+        if new_target_sector:
+            f = get_open_file(filepath)
+            filesize = f.seek(0, SEEK_END)
+            num_sectors = max(1, ceil(filesize / 0x800))
+            new_sectors = RangeSet(new_target_sector,
+                                   new_target_sector + num_sectors)
+            fe = PSX_FILE_MANAGER.get_file(filepath)
+            new_sectors.remove(fe.old_sectors)
+            if new_sectors:
+                for fe in PSX_FILE_MANAGER.flat_files:
+                    if new_sectors.overlaps(fe.old_sectors):
+                        get_open_file(fe.path)
         close_file(filepath)  # do before importing to flush the file
         PSX_FILE_MANAGER.import_file(name, filepath=filepath,
                                      new_target_sector=new_target_sector,
